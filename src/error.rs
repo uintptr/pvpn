@@ -1,0 +1,34 @@
+pub type Result<T> = core::result::Result<T, Error>;
+
+use bincode::error::{DecodeError, EncodeError};
+use derive_more::From;
+
+#[derive(Debug, From)]
+pub enum Error {
+    ReadFailure,
+    ReadLenFailure {
+        expected: usize,
+        actual: usize,
+    },
+    //
+    // 2d party
+    //
+    #[from]
+    Io(std::io::Error),
+
+    //
+    // 3rd party
+    //
+    #[from]
+    LoggingError(log::SetLoggerError),
+    #[from]
+    PacketDecodeFailure(DecodeError),
+    #[from]
+    PacketEncodeFailure(EncodeError),
+}
+
+impl core::fmt::Display for Error {
+    fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::result::Result<(), core::fmt::Error> {
+        write!(fmt, "{self}")
+    }
+}
