@@ -50,7 +50,9 @@ async fn main() -> Result<()> {
 
     let addr = stream.local_addr()?;
 
-    Packet::to_stream(&stream, &addr, &data).await?;
+    let packet = Packet::new(&addr);
+
+    packet.to_stream(&stream, &addr, &data).await?;
 
     Ok(())
 }

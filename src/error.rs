@@ -10,6 +10,7 @@ pub enum Error {
         expected: usize,
         actual: usize,
     },
+    InvalidIpAddrFormat,
     //
     // 2d party
     //

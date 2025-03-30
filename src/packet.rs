@@ -1,34 +1,42 @@
-use std::net::{IpAddr, SocketAddr};
+#![allow(unused)]
+use std::{
+    hash::{DefaultHasher, Hash, Hasher},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    ptr::hash,
+};
 
-use bincode::{Decode, Encode, config};
+use bincode::{
+    BorrowDecode, Encode,
+    config::{self, Configuration},
+};
 use tokio::net::TcpStream;
 
 use crate::error::{Error, Result};
 
-#[derive(Encode, Decode, Debug)]
-pub struct Packet {
+#[derive(Encode, BorrowDecode, Debug)]
+struct WirePacket {
     ver: u8,
-    addr: Vec<u8>,
-    port: u16,
+    addr: u64,
     data: Vec<u8>,
 }
 
-impl Packet {
-    pub fn new(sock_addr: &SocketAddr, data: &[u8]) -> Packet {
-        let addr = match sock_addr.ip() {
-            IpAddr::V4(v4) => v4.octets().to_vec(),
-            IpAddr::V6(v6) => v6.octets().to_vec(),
-        };
+pub struct Packet {
+    pub addr: u64,
+    config: Configuration,
+}
 
-        Packet {
-            ver: 1,
-            addr,
-            port: sock_addr.port(),
-            data: data.to_vec(),
+impl Packet {
+    pub fn new(addr: &SocketAddr) -> Self {
+        let mut hasher = DefaultHasher::new();
+        addr.hash(&mut hasher);
+
+        Self {
+            addr: hasher.finish(),
+            config: config::standard(),
         }
     }
 
-    pub async fn from_stream(stream: TcpStream) -> Result<Packet> {
+    pub async fn from_stream(self, stream: TcpStream) -> Result<Vec<u8>> {
         let mut buf: [u8; 4] = [0; 4];
 
         let count = stream.try_read(&mut buf)?;
@@ -50,22 +58,35 @@ impl Packet {
             });
         }
 
-        let config = config::standard();
-        let (packet, _): (Packet, usize) = bincode::decode_from_slice(&data, config)?;
+        let (wire, _): (WirePacket, usize) = bincode::borrow_decode_from_slice(&data, self.config)?;
 
-        Ok(packet)
+        Ok(wire.data.to_vec())
     }
 
-    pub async fn to_stream(stream: &TcpStream, addr: &SocketAddr, data: &[u8]) -> Result<()> {
-        let packet = Packet::new(addr, data);
+    pub async fn to_stream(
+        &self,
+        stream: &TcpStream,
+        addr: &SocketAddr,
+        data: &[u8],
+    ) -> Result<()> {
+        let wire = WirePacket::new(self.addr, data);
 
-        let config = config::standard();
-        let encoded: Vec<u8> = bincode::encode_to_vec(&packet, config)?;
+        let encoded: Vec<u8> = bincode::encode_to_vec(&wire, self.config)?;
         let encoded_len = encoded.len() as i32;
 
         let len_bytes = encoded_len.to_le_bytes();
         stream.try_write(&len_bytes)?;
         stream.try_write(&encoded)?;
         Ok(())
+    }
+}
+
+impl WirePacket {
+    pub fn new(addr: u64, data: &[u8]) -> WirePacket {
+        WirePacket {
+            ver: 1,
+            addr,
+            data: data.to_vec(),
+        }
     }
 }
