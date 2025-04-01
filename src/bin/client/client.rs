@@ -21,6 +21,14 @@ struct UserArgs {
     #[arg(long, default_value=DEF_SERVER_ADDR)]
     server_address: String,
 
+    // endpoint port
+    #[arg(long)]
+    endpoint_port: u16,
+
+    // endpoint address
+    #[arg(long)]
+    endpoint_address: String,
+
     /// verbose
     #[arg(short, long)]
     verbose: bool,
@@ -44,7 +52,13 @@ async fn read_loop(stream: TcpStream) -> Result<()> {
 
     loop {
         stream.readable().await?;
-        packet.read(&stream, &mut data).await?;
+        let packet = packet.read(&stream, &mut data).await?;
+
+        //
+        // connect to the endpoint and spawn a thread for this address
+        //
+
+        info!("{:?}", packet);
     }
 }
 

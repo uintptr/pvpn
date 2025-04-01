@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, net::SocketAddr};
 
 use clap::Parser;
 
@@ -50,8 +50,10 @@ where
     println!("    {key:<20}{v}");
 }
 
-async fn internet_loop(istream: TcpStream) -> Result<()> {
+async fn internet_loop(client: &TcpStream, istream: TcpStream, iaddr: SocketAddr) -> Result<()> {
     let mut buf: [u8; 8196] = [0; 8196];
+
+    let ipacket = PacketStream::new(&iaddr);
 
     loop {
         istream.readable().await?;
@@ -59,6 +61,7 @@ async fn internet_loop(istream: TcpStream) -> Result<()> {
         let len = match istream.try_read(&mut buf) {
             Ok(v) => v,
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                // readable lied
                 continue;
             }
             Err(e) => return Err(e.into()),
@@ -68,7 +71,8 @@ async fn internet_loop(istream: TcpStream) -> Result<()> {
             return Err(Error::EOF);
         }
 
-        println!("len: {len}");
+        info!("data len={len}");
+        ipacket.write(client, &buf[0..len]).await?;
     }
 }
 
@@ -94,10 +98,10 @@ async fn client_handler(client: TcpStream, iaddr: &str, iport: u16) -> Result<()
         tokio::select! {
             result = accept_future => {
                 match result {
-                    Ok((istream, client_addr)) => {
-                        info!("internet connected: {:?}", client_addr);
+                    Ok((istream, iaddr)) => {
+                        info!("internet connected: {:?}", iaddr);
 
-                        if let Err(e) = internet_loop(istream).await {
+                        if let Err(e) = internet_loop(&client, istream, iaddr).await {
                             error!("internet -> {e}");
                         }
                     }
@@ -111,10 +115,10 @@ async fn client_handler(client: TcpStream, iaddr: &str, iport: u16) -> Result<()
                 match result{
                     Ok(_) => {
                         let wire = local_packet.read(&client, &mut data_buffer).await?;
-                        println!("data: {:?}", wire);
+                        info!("data: {:?}", wire);
                     }
                     Err(e) => {
-                        error!("client error: {e}");
+                        error!("client -> {e}");
                         return Err(e.into());
                     }
                 }
