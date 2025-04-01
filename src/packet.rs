@@ -24,7 +24,7 @@ pub struct Packet<'a> {
     pub data: &'a [u8],
 }
 
-impl<'a> Packet<'a> {
+impl Packet<'_> {
     pub fn new(addr: u64, data: &[u8]) -> Packet {
         Packet {
             ver: PACKET_VERSION,
@@ -67,11 +67,11 @@ impl PacketStream {
             }
         }
 
-        let req_size = i32::from_le_bytes(buf.try_into().unwrap()) as usize;
+        let req_size = i32::from_le_bytes(buf) as usize;
 
         if req_size > data.len() {
             return Err(Error::BufferTooSmall {
-                expected: req_size as usize,
+                expected: req_size,
                 actual: data.len(),
             });
         }
