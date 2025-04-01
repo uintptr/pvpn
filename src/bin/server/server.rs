@@ -1,4 +1,3 @@
-#![allow(unused)]
 use std::fmt::Display;
 
 use clap::Parser;
@@ -8,7 +7,12 @@ use tokio::{
     io,
     net::{TcpListener, TcpStream},
 };
-use tunnel::{const_vars::DEF_SERVER_PORT, error::Result, logging::setup_logger};
+use tunnel::{
+    const_vars::DEF_SERVER_PORT,
+    error::{Error, Result},
+    logging::setup_logger,
+    packet::PacketStream,
+};
 
 const DEF_INTERNET_PORT: u16 = 8080;
 const DEF_INTERNET_ADDR: &str = "0.0.0.0";
@@ -46,50 +50,77 @@ where
     println!("    {key:<20}{v}");
 }
 
-async fn request_loop(client: &TcpStream, stream: TcpStream) -> Result<()> {
-    let mut buf: [u8; 4] = [0; 4];
+async fn internet_loop(istream: TcpStream) -> Result<()> {
     let mut buf: [u8; 8196] = [0; 8196];
 
     loop {
-        stream.readable().await?;
+        istream.readable().await?;
 
-        match stream.try_read(&mut buf) {
-            Ok(n) => {
-                info!("received {n} bytes");
-
-                if 0 == n {
-                    break;
-                }
-            }
+        let len = match istream.try_read(&mut buf) {
+            Ok(v) => v,
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                 continue;
             }
-            Err(e) => {
-                return Err(e.into());
-            }
-        }
-    }
+            Err(e) => return Err(e.into()),
+        };
 
-    Ok(())
+        if 0 == len {
+            return Err(Error::EOF);
+        }
+
+        println!("len: {len}");
+    }
 }
 
 async fn client_handler(client: TcpStream, iaddr: &str, iport: u16) -> Result<()> {
     let iaddr_str = format!("{}:{}", iaddr, iport);
 
+    info!("starting listener on {iaddr_str}");
+
     let ilistener = TcpListener::bind(iaddr_str).await?;
 
+    let peer_addr = client.peer_addr()?;
+
+    let local_packet = PacketStream::new(&peer_addr);
+
+    let mut data_buffer: [u8; 8196] = [0; 8196];
+
+    info!("server is ready");
+
     loop {
-        let (istream, client_addr) = ilistener.accept().await?;
+        let accept_future = ilistener.accept();
+        let client_future = client.readable();
 
-        info!("internet connected: {:?}", client_addr);
+        tokio::select! {
+            result = accept_future => {
+                match result {
+                    Ok((istream, client_addr)) => {
+                        info!("internet connected: {:?}", client_addr);
 
-        if let Err(e) = request_loop(&client, istream).await {
-            error!("request error: {e}");
-            break;
+                        if let Err(e) = internet_loop(istream).await {
+                            error!("internet -> {e}");
+                        }
+                    }
+                    Err(e) => {
+                        error!("accept failure: {e}");
+                        return Err(e.into());
+                    }
+                }
+            }
+            result = client_future => {
+                match result{
+                    Ok(_) => {
+                        let wire = local_packet.read(&client, &mut data_buffer).await?;
+                        println!("data: {:?}", wire);
+                    }
+                    Err(e) => {
+                        error!("client error: {e}");
+                        return Err(e.into());
+                    }
+                }
+            }
         }
     }
-
-    Ok(())
 }
 
 #[tokio::main]
@@ -113,8 +144,10 @@ async fn main() -> Result<()> {
         let (stream, client_addr) = listener.accept().await?;
         info!("client connected: {:?}", client_addr);
 
-        if let Err(e) = client_handler(stream, &args.internet_address, args.internet_port).await {
-            error!("client error: {e}");
+        match client_handler(stream, &args.internet_address, args.internet_port).await {
+            Ok(_) => info!("client disconnected"),
+            Err(Error::EOF) => info!("client disconnected (EOF)"),
+            Err(e) => error!("client error: {}", e),
         }
     }
 }

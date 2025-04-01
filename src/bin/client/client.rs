@@ -1,9 +1,12 @@
-use std::fmt::Display;
+use std::{fmt::Display, time::Duration};
 
 use clap::Parser;
 
-use tokio::net::TcpStream;
-use tunnel::{const_vars::DEF_SERVER_PORT, error::Result, packet::Packet};
+use log::{error, info};
+use tokio::{net::TcpStream, time::sleep};
+use tunnel::{
+    const_vars::DEF_SERVER_PORT, error::Result, logging::setup_logger, packet::PacketStream,
+};
 
 const DEF_SERVER_ADDR: &str = "127.0.0.1";
 
@@ -31,6 +34,20 @@ where
     println!("    {key:<20}{v}");
 }
 
+async fn read_loop(stream: TcpStream) -> Result<()> {
+    let mut data = [0u8; 8196];
+
+    let addr = stream.local_addr()?;
+    let packet = PacketStream::new(&addr);
+
+    info!("client is ready");
+
+    loop {
+        stream.readable().await?;
+        packet.read(&stream, &mut data).await?;
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = UserArgs::parse();
@@ -42,17 +59,19 @@ async fn main() -> Result<()> {
 
     let addr = format!("{}:{}", args.server_address, args.server_port);
 
-    let stream = TcpStream::connect(addr).await?;
+    setup_logger()?;
 
-    stream.writable().await?;
+    loop {
+        match TcpStream::connect(&addr).await {
+            Ok(stream) => {
+                let res = read_loop(stream).await;
+                info!("client disconnected. error: {:?}", res);
+            }
+            Err(e) => {
+                error!("{e}");
+            }
+        }
 
-    let data = [0u8; 10];
-
-    let addr = stream.local_addr()?;
-
-    let packet = Packet::new(&addr);
-
-    packet.to_stream(&stream, &addr, &data).await?;
-
-    Ok(())
+        sleep(Duration::from_secs(1)).await;
+    }
 }

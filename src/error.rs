@@ -10,7 +10,26 @@ pub enum Error {
         expected: usize,
         actual: usize,
     },
+    WriteFailure {
+        expected: usize,
+        actual: usize
+    },
+    BufferTooSmall{
+        expected: usize,
+        actual: usize
+    },
+    EOF,
+    WouldBlock,
     InvalidIpAddrFormat,
+
+    //
+    //
+    //
+    PacketInvalidVersion {
+        expected: u8,
+        actual: u8,
+    },
+
     //
     // 2d party
     //
@@ -30,6 +49,6 @@ pub enum Error {
 
 impl core::fmt::Display for Error {
     fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::result::Result<(), core::fmt::Error> {
-        write!(fmt, "{self}")
+        write!(fmt, "{self:?}")
     }
 }

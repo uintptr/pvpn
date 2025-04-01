@@ -9,84 +9,113 @@ use bincode::{
     BorrowDecode, Encode,
     config::{self, Configuration},
 };
+use bytes::{BufMut, BytesMut};
+use log::info;
 use tokio::net::TcpStream;
 
 use crate::error::{Error, Result};
 
+const PACKET_VERSION: u8 = 1;
+
 #[derive(Encode, BorrowDecode, Debug)]
-struct WirePacket {
+pub struct Packet<'a> {
     ver: u8,
-    addr: u64,
-    data: Vec<u8>,
+    pub addr: u64,
+    pub data: &'a [u8],
 }
 
-pub struct Packet {
-    pub addr: u64,
+impl<'a> Packet<'a> {
+    pub fn new(addr: u64, data: &[u8]) -> Packet {
+        Packet {
+            ver: PACKET_VERSION,
+            addr,
+            data,
+        }
+    }
+}
+
+pub struct PacketStream {
+    addr: u64,
     config: Configuration,
 }
 
-impl Packet {
-    pub fn new(addr: &SocketAddr) -> Self {
-        let mut hasher = DefaultHasher::new();
-        addr.hash(&mut hasher);
+fn hash_sockaddr(addr: &SocketAddr) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    addr.hash(&mut hasher);
+    hasher.finish()
+}
 
+impl PacketStream {
+    pub fn new(addr: &SocketAddr) -> Self {
         Self {
-            addr: hasher.finish(),
+            addr: hash_sockaddr(addr),
             config: config::standard(),
         }
     }
 
-    pub async fn from_stream(self, stream: TcpStream) -> Result<Vec<u8>> {
+    pub async fn read<'a>(&self, stream: &TcpStream, data: &'a mut [u8]) -> Result<Packet<'a>> {
         let mut buf: [u8; 4] = [0; 4];
 
-        let count = stream.try_read(&mut buf)?;
-
-        if 4 != count {
-            return Err(Error::ReadFailure);
+        match stream.try_read(&mut buf)? {
+            0 => return Err(Error::EOF),
+            4 => {}
+            l => {
+                return Err(Error::ReadLenFailure {
+                    expected: 4,
+                    actual: l,
+                });
+            }
         }
 
-        let req_size = i32::from_be_bytes(buf) as usize;
+        let req_size = i32::from_le_bytes(buf.try_into().unwrap()) as usize;
 
-        let mut data: Vec<u8> = Vec::with_capacity(req_size);
-
-        let res_size = stream.try_read(&mut data)?;
-
-        if req_size != res_size {
-            return Err(Error::ReadLenFailure {
-                expected: req_size,
-                actual: res_size,
+        if req_size > data.len() {
+            return Err(Error::BufferTooSmall {
+                expected: req_size as usize,
+                actual: data.len(),
             });
         }
 
-        let (wire, _): (WirePacket, usize) = bincode::borrow_decode_from_slice(&data, self.config)?;
+        match stream.try_read(&mut data[..req_size])? {
+            0 => return Err(Error::EOF),
+            req_size => {}
+            l => {
+                return Err(Error::ReadLenFailure {
+                    expected: 4,
+                    actual: l,
+                });
+            }
+        }
 
-        Ok(wire.data.to_vec())
+        let (wire, _): (Packet, usize) = bincode::borrow_decode_from_slice(data, self.config)?;
+
+        Ok(wire)
     }
 
-    pub async fn to_stream(
-        &self,
-        stream: &TcpStream,
-        addr: &SocketAddr,
-        data: &[u8],
-    ) -> Result<()> {
-        let wire = WirePacket::new(self.addr, data);
+    pub async fn write(&self, stream: &TcpStream, data: &[u8]) -> Result<()> {
+        let wire = Packet::new(self.addr, data);
 
         let encoded: Vec<u8> = bincode::encode_to_vec(&wire, self.config)?;
         let encoded_len = encoded.len() as i32;
 
         let len_bytes = encoded_len.to_le_bytes();
-        stream.try_write(&len_bytes)?;
-        stream.try_write(&encoded)?;
-        Ok(())
-    }
-}
 
-impl WirePacket {
-    pub fn new(addr: u64, data: &[u8]) -> WirePacket {
-        WirePacket {
-            ver: 1,
-            addr,
-            data: data.to_vec(),
+        let count = stream.try_write(&len_bytes)?;
+        if 4 != count {
+            return Err(Error::WriteFailure {
+                expected: 4,
+                actual: count,
+            });
         }
+        let count = stream.try_write(&encoded)?;
+
+        if encoded.len() != count {
+            return Err(Error::WriteFailure {
+                expected: encoded.len(),
+                actual: count,
+            });
+        }
+
+        Ok(())
     }
 }
