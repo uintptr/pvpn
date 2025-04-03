@@ -1,10 +1,10 @@
-use std::{collections::HashMap, io, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use clap::Parser;
 
-use log::{error, info, warn};
+use log::{error, info};
 use tokio::{
-    io::{AsyncWriteExt, WriteHalf, split},
+    io::{AsyncReadExt, AsyncWriteExt, WriteHalf, split},
     net::{TcpListener, TcpStream},
     select,
     sync::{
@@ -48,54 +48,28 @@ struct UserArgs {
     verbose: bool,
 }
 
-#[derive(Debug)]
-struct ThreadCtx {
-    pub tx: Sender<Packet>,
-}
-
-impl ThreadCtx {
-    pub fn new(tx: Sender<Packet>) -> ThreadCtx {
-        ThreadCtx { tx }
-    }
-}
-
-async fn internet_loop(
+async fn internet_loop<I>(
     cwriter_mtx: Arc<Mutex<WriteHalf<TcpStream>>>,
     addr: u64,
-    mut istream: TcpStream,
+    mut istream: I,
     mut rx: Receiver<Packet>,
-) -> Result<()> {
+) -> Result<()>
+where
+    I: AsyncReadExt + AsyncWriteExt + Unpin,
+{
     let mut buf: [u8; 8196] = [0; 8196];
 
     let ps = PacketStream::new();
 
     loop {
         select! {
-            ret = rx.recv() => {
-                let packet = match ret{
-                    Some(v) => v,
-                    None => {
-                        error!("Unable to read from mpsc");
-                        return Err(Error::ReadFailure);
-                    }
-                };
-
-                info!("writing {} bytes to the endpoint", packet.data.len());
-                istream.writable().await?;
+            Some(packet) = rx.recv() => {
+                info!("{}", packet);
                 istream.write_all(&packet.data).await?;
             }
-            ret = istream.readable() => {
-
+            ret = istream.read(&mut buf) => {
                 match ret{
-                    Ok(_) => {
-                        let len = match istream.try_read(&mut buf) {
-                            Ok(v) => v,
-                            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                                // readable lied
-                                continue;
-                            }
-                            Err(e) => return Err(e.into()),
-                        };
+                    Ok(len) => {
 
                         if 0 == len {
                             return Err(Error::EOF);
@@ -127,47 +101,38 @@ async fn client_handler(client: TcpStream, iaddr: &str, iport: u16) -> Result<()
     let cwriter_mtx = Arc::new(Mutex::new(cwriter));
 
     let mut threads: JoinSet<u64> = JoinSet::new();
-    let mut conn_table: HashMap<u64, ThreadCtx> = HashMap::new();
+    let mut conn_table: HashMap<u64, Sender<Packet>> = HashMap::new();
 
     info!("server is ready");
 
     loop {
         tokio::select! {
-            result = ilistener.accept() => {
-                match result {
-                    Ok((istream, iaddr)) => {
-                        info!("internet connected: {:?}", iaddr);
+            Ok((istream, iaddr)) = ilistener.accept() => {
+                info!("internet connected: {:?}", iaddr);
 
-                        let addr = PacketStream::addr_from_sockaddr(&iaddr);
-                        let (tx, rx) = mpsc::channel(32);
-                        let cwriter_mtx = cwriter_mtx.clone();
+                let addr = PacketStream::addr_from_sockaddr(&iaddr);
+                let (tx, rx) = mpsc::channel(32);
+                let cwriter_mtx = cwriter_mtx.clone();
 
-                        threads.spawn(async move {
-                            let res = internet_loop(cwriter_mtx, addr, istream, rx).await;
+                threads.spawn(async move {
+                    let res = internet_loop(cwriter_mtx, addr, istream, rx).await;
 
-                            match &res{
-                                Ok(_) => {}
-                                Err(Error::EOF) => {
-                                    info!("internet client EOF");
-                                }
-                                Err(e) => {
-                                    error!("thread returned error={e}");
-                                }
-                            }
-                            addr
-                        });
-
-                        let ctx = ThreadCtx::new(tx);
-
-                        if conn_table.insert(addr, ctx).is_some(){
-                            error!("addr={addr} already in table");
-                            break;
+                    match &res{
+                        Ok(_) => {}
+                        Err(Error::EOF) => {
+                            info!("internet client EOF");
+                        }
+                        Err(e) => {
+                            error!("thread returned error={e}");
                         }
                     }
-                    Err(e) => {
-                        error!("accept failure: {e}");
-                        break;
-                    }
+                    addr
+                });
+
+
+                if conn_table.insert(addr, tx).is_some(){
+                    error!("addr={addr} already in table");
+                    break Err(Error::ConnectionNotFound)
                 }
             }
             result = ps.read(&mut creader) => {
@@ -179,21 +144,17 @@ async fn client_handler(client: TcpStream, iaddr: &str, iport: u16) -> Result<()
                         info!("data: {}", packet);
 
                         match conn_table.get(&packet.addr){
-                            Some(v) => {
-                                if let Err(e) = v.tx.send(packet).await{
-                                    error!("{e}");
-                                    break;
-                                }
+                            Some(tx) => {
+                                tx.send(packet).await?
                             }
                             None => {
                                 error!("unable to find addr={}",packet.addr );
-                                break;
+                                break Err(Error::ConnectionNotFound)
                             }
                         }
                     }
                     Err(e) => {
-                        error!("client -> {e}");
-                        break;
+                        break Err(e)
                     }
                 }
             }
@@ -202,12 +163,6 @@ async fn client_handler(client: TcpStream, iaddr: &str, iport: u16) -> Result<()
             }
         }
     }
-
-    warn!("client is quitting");
-    threads.shutdown().await;
-    threads.join_all().await;
-
-    Ok(())
 }
 
 #[tokio::main]

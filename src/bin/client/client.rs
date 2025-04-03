@@ -2,7 +2,7 @@ use std::{collections::HashMap, io, sync::Arc, time::Duration};
 
 use clap::Parser;
 
-use log::{error, info, warn};
+use log::{error, info};
 use tokio::{
     io::{AsyncWriteExt, WriteHalf, split},
     net::TcpStream,
@@ -45,29 +45,6 @@ struct UserArgs {
     /// verbose
     #[arg(short, long)]
     verbose: bool,
-}
-
-#[derive(Debug)]
-struct ThreadCtx {
-    pub tx: Sender<Packet>,
-}
-
-impl ThreadCtx {
-    pub fn new(tx: Sender<Packet>) -> ThreadCtx {
-        ThreadCtx { tx }
-    }
-}
-
-async fn _send_eof(tx: Sender<(u64, &[u8])>, addr: u64) -> Result<()> {
-    let eof: &[u8] = &[];
-
-    match tx.send((addr, eof)).await {
-        Ok(_) => Ok(()),
-        Err(e) => {
-            error!("{e}");
-            Err(Error::TxFailure)
-        }
-    }
 }
 
 async fn endpoint_loop(
@@ -140,7 +117,7 @@ async fn read_loop(server_stream: TcpStream, server_addr: &str) -> Result<()> {
     let iwriter = Arc::new(Mutex::new(swriter));
 
     let mut threads: JoinSet<u64> = JoinSet::new();
-    let mut conn_table: HashMap<u64, ThreadCtx> = HashMap::new();
+    let mut conn_table: HashMap<u64, Sender<Packet>> = HashMap::new();
 
     loop {
         select! {
@@ -149,7 +126,7 @@ async fn read_loop(server_stream: TcpStream, server_addr: &str) -> Result<()> {
                 match ret{
                     Ok(packet) => {
 
-                        let ctx = conn_table.entry(packet.addr).or_insert_with(||{
+                        let tx = conn_table.entry(packet.addr).or_insert_with(||{
                             let (tx, rx) = mpsc::channel(32);
                             let server_addr = server_addr.to_string();
                             let iwriter = iwriter.clone();
@@ -168,19 +145,13 @@ async fn read_loop(server_stream: TcpStream, server_addr: &str) -> Result<()> {
                                 packet.addr
                             });
 
-                            ThreadCtx::new(tx)
+                            tx
                         });
 
-                        if let Err(e) = ctx.tx.send(packet).await{
-                            // fatal
-                            error!("{e}");
-                            break;
-                        }
+                        tx.send(packet).await?;
                     }
                     Err(e) =>{
-                        // fatal
-                        error!("{e}");
-                        break;
+                        break Err(e)
                     }
                 }
             }
@@ -189,12 +160,6 @@ async fn read_loop(server_stream: TcpStream, server_addr: &str) -> Result<()> {
             }
         }
     }
-
-    warn!("client is quitting");
-    threads.shutdown().await;
-    threads.join_all().await;
-
-    Ok(())
 }
 
 #[tokio::main]

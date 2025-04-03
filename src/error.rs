@@ -3,6 +3,8 @@ pub type Result<T> = core::result::Result<T, Error>;
 use bincode::error::{DecodeError, EncodeError};
 use derive_more::From;
 
+use crate::packet::Packet;
+
 #[derive(Debug, From)]
 pub enum Error {
     ReadFailure,
@@ -21,7 +23,8 @@ pub enum Error {
     EOF,
     WouldBlock,
     InvalidIpAddrFormat,
-
+    ConnectionDuplicateError,
+    ConnectionNotFound,
     TxFailure,
 
     //
@@ -47,6 +50,8 @@ pub enum Error {
     PacketDecodeFailure(DecodeError),
     #[from]
     PacketEncodeFailure(EncodeError),
+    #[from]
+    MpscSendError(tokio::sync::mpsc::error::SendError<Packet>),
 }
 
 impl core::fmt::Display for Error {
