@@ -12,15 +12,17 @@ pub enum Error {
     },
     WriteFailure {
         expected: usize,
-        actual: usize
+        actual: usize,
     },
-    BufferTooSmall{
+    BufferTooSmall {
         expected: usize,
-        actual: usize
+        actual: usize,
     },
     EOF,
     WouldBlock,
     InvalidIpAddrFormat,
+
+    TxFailure,
 
     //
     //

@@ -6,115 +6,101 @@ use std::{
 };
 
 use bincode::{
-    BorrowDecode, Encode,
+    BorrowDecode, Decode, Encode,
     config::{self, Configuration},
 };
 use bytes::{BufMut, BytesMut};
 use log::info;
-use tokio::net::TcpStream;
+use tokio::{
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    net::TcpStream,
+};
 
 use crate::error::{Error, Result};
 
 const PACKET_VERSION: u8 = 1;
 
-#[derive(Encode, BorrowDecode, Debug)]
-pub struct Packet<'a> {
+#[derive(Encode, Decode, Debug, Clone)]
+pub struct Packet {
     ver: u8,
     pub addr: u64,
-    pub data: &'a [u8],
+    pub data: Vec<u8>,
 }
 
-impl Packet<'_> {
+impl Packet {
     pub fn new(addr: u64, data: &[u8]) -> Packet {
         Packet {
             ver: PACKET_VERSION,
             addr,
-            data,
+            data: data.to_vec(),
         }
+    }
+}
+impl core::fmt::Display for Packet {
+    fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::result::Result<(), core::fmt::Error> {
+        let first_bytes = match self.data.len() {
+            0..15 => &self.data,
+            _ => &self.data[..16],
+        };
+
+        let hex = pretty_hex::pretty_hex(&self.data);
+
+        writeln!(fmt, "addr={} len={}", self.addr, self.data.len())?;
+        write!(fmt, "{}", hex)
     }
 }
 
 pub struct PacketStream {
-    addr: u64,
     config: Configuration,
 }
 
-fn hash_sockaddr(addr: &SocketAddr) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    addr.hash(&mut hasher);
-    hasher.finish()
-}
-
 impl PacketStream {
-    pub fn new(addr: &SocketAddr) -> Self {
+    pub fn new() -> Self {
         Self {
-            addr: hash_sockaddr(addr),
             config: config::standard(),
         }
     }
 
-    pub async fn read<'a>(&self, stream: &TcpStream, data: &'a mut [u8]) -> Result<Packet<'a>> {
+    pub fn addr_from_sockaddr(addr: &SocketAddr) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        addr.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    pub async fn read<R>(&self, reader: &mut R) -> Result<Packet>
+    where
+        R: AsyncReadExt + Unpin,
+    {
         let mut buf: [u8; 4] = [0; 4];
 
-        match stream.try_read(&mut buf)? {
-            0 => return Err(Error::EOF),
-            4 => {}
-            l => {
-                return Err(Error::ReadLenFailure {
-                    expected: 4,
-                    actual: l,
-                });
-            }
-        }
+        reader.read_exact(&mut buf).await?;
 
-        let req_size = i32::from_le_bytes(buf) as usize;
+        let req_size = i32::from_be_bytes(buf) as usize;
 
-        if req_size > data.len() {
-            return Err(Error::BufferTooSmall {
-                expected: req_size,
-                actual: data.len(),
-            });
-        }
+        let mut data: Vec<u8> = Vec::with_capacity(req_size);
 
-        match stream.try_read(&mut data[..req_size])? {
-            0 => return Err(Error::EOF),
-            req_size => {}
-            l => {
-                return Err(Error::ReadLenFailure {
-                    expected: 4,
-                    actual: l,
-                });
-            }
-        }
+        reader.read_buf(&mut data).await?;
 
-        let (wire, _): (Packet, usize) = bincode::borrow_decode_from_slice(data, self.config)?;
+        let (wire, _): (Packet, usize) = bincode::decode_from_slice(&data, self.config)?;
 
         Ok(wire)
     }
 
-    pub async fn write(&self, stream: &TcpStream, data: &[u8]) -> Result<()> {
-        let wire = Packet::new(self.addr, data);
+    pub async fn write<W>(&self, writer: &mut W, addr: u64, data: &[u8]) -> Result<()>
+    where
+        W: AsyncWriteExt + Unpin,
+    {
+        let wire = Packet::new(addr, data);
 
         let encoded: Vec<u8> = bincode::encode_to_vec(&wire, self.config)?;
         let encoded_len = encoded.len() as i32;
 
-        let len_bytes = encoded_len.to_le_bytes();
+        let len_bytes = encoded_len.to_be_bytes();
 
-        let count = stream.try_write(&len_bytes)?;
-        if 4 != count {
-            return Err(Error::WriteFailure {
-                expected: 4,
-                actual: count,
-            });
-        }
-        let count = stream.try_write(&encoded)?;
+        writer.write_all(&len_bytes).await?;
+        writer.write_all(&encoded).await?;
 
-        if encoded.len() != count {
-            return Err(Error::WriteFailure {
-                expected: encoded.len(),
-                actual: count,
-            });
-        }
+        info!("wrote {} bytes to addr={addr}", encoded.len());
 
         Ok(())
     }
