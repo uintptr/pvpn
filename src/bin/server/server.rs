@@ -126,7 +126,7 @@ async fn client_handler(client: TcpStream, iaddr: &str, iport: u16) -> Result<()
     let (mut creader, cwriter) = split(client);
     let cwriter_mtx = Arc::new(Mutex::new(cwriter));
 
-    let mut threads: JoinSet<Result<()>> = JoinSet::new();
+    let mut threads: JoinSet<u64> = JoinSet::new();
     let mut conn_table: HashMap<u64, ThreadCtx> = HashMap::new();
 
     info!("server is ready");
@@ -154,7 +154,7 @@ async fn client_handler(client: TcpStream, iaddr: &str, iport: u16) -> Result<()
                                     error!("thread returned error={e}");
                                 }
                             }
-                            res
+                            addr
                         });
 
                         let ctx = ThreadCtx::new(tx);
@@ -196,6 +196,9 @@ async fn client_handler(client: TcpStream, iaddr: &str, iport: u16) -> Result<()
                         break;
                     }
                 }
+            }
+            Some(Ok(addr)) = threads.join_next() =>{
+                conn_table.remove(&addr);
             }
         }
     }

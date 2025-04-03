@@ -139,7 +139,7 @@ async fn read_loop(server_stream: TcpStream, server_addr: &str) -> Result<()> {
 
     let iwriter = Arc::new(Mutex::new(swriter));
 
-    let mut threads: JoinSet<Result<()>> = JoinSet::new();
+    let mut threads: JoinSet<u64> = JoinSet::new();
     let mut conn_table: HashMap<u64, ThreadCtx> = HashMap::new();
 
     loop {
@@ -165,7 +165,7 @@ async fn read_loop(server_stream: TcpStream, server_addr: &str) -> Result<()> {
                                         error!("thread returned error={e}");
                                     }
                                 }
-                                res
+                                packet.addr
                             });
 
                             ThreadCtx::new(tx)
@@ -183,6 +183,9 @@ async fn read_loop(server_stream: TcpStream, server_addr: &str) -> Result<()> {
                         break;
                     }
                 }
+            }
+            Some(Ok(addr)) = threads.join_next() =>{
+                conn_table.remove(&addr);
             }
         }
     }
