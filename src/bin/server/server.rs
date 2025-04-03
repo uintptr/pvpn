@@ -86,8 +86,6 @@ async fn internet_loop(
             }
             ret = istream.readable() => {
 
-                info!("something to read from the internet");
-
                 match ret{
                     Ok(_) => {
                         let len = match istream.try_read(&mut buf) {
@@ -103,7 +101,6 @@ async fn internet_loop(
                             return Err(Error::EOF);
                         }
 
-                        info!("data len={len}");
                         let mut writer = cwriter_mtx.lock().await;
                         ps.write(&mut *writer, addr, &buf[0..len]).await?;
                     }
@@ -120,7 +117,7 @@ async fn internet_loop(
 async fn client_handler(client: TcpStream, iaddr: &str, iport: u16) -> Result<()> {
     let iaddr_str = format!("{}:{}", iaddr, iport);
 
-    info!("starting listener on {iaddr_str}");
+    info!("starting internet listener on {iaddr_str}");
 
     let ilistener = TcpListener::bind(iaddr_str).await?;
 
@@ -147,8 +144,15 @@ async fn client_handler(client: TcpStream, iaddr: &str, iport: u16) -> Result<()
 
                         threads.spawn(async move {
                             let res = internet_loop(cwriter_mtx, addr, istream, rx).await;
-                            if let Err(e) = &res{
-                                error!("thread returned erro={e}");
+
+                            match &res{
+                                Ok(_) => {}
+                                Err(Error::EOF) => {
+                                    info!("internet client EOF");
+                                }
+                                Err(e) => {
+                                    error!("thread returned error={e}");
+                                }
                             }
                             res
                         });

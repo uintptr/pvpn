@@ -149,30 +149,33 @@ async fn read_loop(server_stream: TcpStream, server_addr: &str) -> Result<()> {
                 match ret{
                     Ok(packet) => {
 
-                        if !conn_table.contains_key(&packet.addr){
+                        let ctx = conn_table.entry(packet.addr).or_insert_with(||{
                             let (tx, rx) = mpsc::channel(32);
                             let server_addr = server_addr.to_string();
                             let iwriter = iwriter.clone();
 
                             threads.spawn(async move {
                                 let res = endpoint_loop(server_addr, packet.addr,iwriter, rx).await;
-                                if let Err(e) = &res{
-                                    error!("thread returned erro={e}");
+                                match &res{
+                                    Ok(_) => {}
+                                    Err(Error::EOF) => {
+                                        info!("internet client EOF");
+                                    }
+                                    Err(e) => {
+                                        error!("thread returned error={e}");
+                                    }
                                 }
                                 res
                             });
 
-                            let ctx = ThreadCtx::new(tx);
-                            conn_table.insert(packet.addr, ctx);
+                            ThreadCtx::new(tx)
+                        });
+
+                        if let Err(e) = ctx.tx.send(packet).await{
+                            // fatal
+                            error!("{e}");
+                            break;
                         }
-
-                        let ctx = match conn_table.get(&packet.addr){
-                            Some(v) => v,
-                            None => { break }
-                        };
-
-                        let res = ctx.tx.send(packet).await;
-                        info!("{:?}", res);
                     }
                     Err(e) =>{
                         // fatal

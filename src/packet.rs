@@ -35,23 +35,26 @@ impl Packet {
             data: data.to_vec(),
         }
     }
+
+    pub fn hex_dump(&self) {
+        let hex = pretty_hex::pretty_hex(&self.data);
+        print!("{hex}");
+    }
 }
 impl core::fmt::Display for Packet {
     fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::result::Result<(), core::fmt::Error> {
-        let first_bytes = match self.data.len() {
-            0..15 => &self.data,
-            _ => &self.data[..16],
-        };
-
-        let hex = pretty_hex::pretty_hex(&self.data);
-
-        writeln!(fmt, "addr={} len={}", self.addr, self.data.len())?;
-        write!(fmt, "{}", hex)
+        write!(fmt, "addr={} len={}", self.addr, self.data.len())
     }
 }
 
 pub struct PacketStream {
     config: Configuration,
+}
+
+impl Default for PacketStream {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PacketStream {
