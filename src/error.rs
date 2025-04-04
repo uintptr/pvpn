@@ -8,33 +8,8 @@ use crate::packet::Packet;
 #[derive(Debug, From)]
 pub enum Error {
     ReadFailure,
-    ReadLenFailure {
-        expected: usize,
-        actual: usize,
-    },
-    WriteFailure {
-        expected: usize,
-        actual: usize,
-    },
-    BufferTooSmall {
-        expected: usize,
-        actual: usize,
-    },
     EOF,
-    WouldBlock,
-    InvalidIpAddrFormat,
-    ConnectionDuplicateError,
     ConnectionNotFound,
-    TxFailure,
-
-    //
-    //
-    //
-    PacketInvalidVersion {
-        expected: u8,
-        actual: u8,
-    },
-
     //
     // 2d party
     //

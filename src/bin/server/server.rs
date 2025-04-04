@@ -25,7 +25,7 @@ const DEF_INTERNET_ADDR: &str = "0.0.0.0";
 const DEF_CLIENT_ADDR: &str = "0.0.0.0";
 
 #[derive(Parser)]
-#[command(version, about, long_about = None)]
+#[command(version, about, long_about = None, color=clap::ColorChoice::Never)]
 struct UserArgs {
     /// listening port
     #[arg(long, default_value_t=DEF_INTERNET_PORT)]
@@ -48,43 +48,41 @@ struct UserArgs {
     verbose: bool,
 }
 
-async fn internet_loop<I>(
+async fn internet_loop(
     cwriter_mtx: Arc<Mutex<WriteHalf<TcpStream>>>,
     addr: u64,
-    mut istream: I,
+    mut istream: TcpStream,
     mut rx: Receiver<Packet>,
-) -> Result<()>
-where
-    I: AsyncReadExt + AsyncWriteExt + Unpin,
-{
+) -> Result<()> {
     let mut buf: [u8; 8196] = [0; 8196];
 
     let ps = PacketStream::new();
 
+    let mut msg_id = 0;
+
     loop {
         select! {
             Some(packet) = rx.recv() => {
-                info!("{}", packet);
+                istream.writable().await?;
                 istream.write_all(&packet.data).await?;
             }
-            ret = istream.read(&mut buf) => {
-                match ret{
-                    Ok(len) => {
-
-                        if 0 == len {
-                            return Err(Error::EOF);
-                        }
-
-                        let mut writer = cwriter_mtx.lock().await;
-                        ps.write(&mut *writer, addr, &buf[0..len]).await?;
-                    }
-                    Err(e) => {
-                        error!("{e}");
-                        return Err(e.into())
-                    }
+            ret = istream.readable() =>
+            {
+                if let Err(e) = ret{
+                    return Err(e.into());
                 }
+
+                let len = istream.read(&mut buf).await?;
+
+                if 0 == len {
+                    break Err(Error::EOF);
+                }
+                let mut writer = cwriter_mtx.lock().await;
+                ps.write(&mut *writer, msg_id,addr, &buf[0..len]).await?;
             }
         }
+
+        msg_id += 1;
     }
 }
 
@@ -117,6 +115,7 @@ async fn client_handler(client: TcpStream, iaddr: &str, iport: u16) -> Result<()
                 threads.spawn(async move {
                     let res = internet_loop(cwriter_mtx, addr, istream, rx).await;
 
+
                     match &res{
                         Ok(_) => {}
                         Err(Error::EOF) => {
@@ -141,8 +140,6 @@ async fn client_handler(client: TcpStream, iaddr: &str, iport: u16) -> Result<()
                         //
                         // client send data for the internet connection
                         //
-                        info!("data: {}", packet);
-
                         match conn_table.get(&packet.addr){
                             Some(tx) => {
                                 tx.send(packet).await?
@@ -176,7 +173,7 @@ async fn main() -> Result<()> {
     printkv("Client Port", args.client_port);
     printkv("Verbose", args.verbose);
 
-    setup_logger()?;
+    setup_logger(args.verbose)?;
 
     let listening_addr = format!("{}:{}", args.client_address, args.client_port);
 

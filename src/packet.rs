@@ -8,6 +8,7 @@ use std::{
 use bincode::{
     BorrowDecode, Decode, Encode,
     config::{self, Configuration},
+    enc::write,
 };
 use bytes::{BufMut, BytesMut};
 use log::info;
@@ -24,14 +25,16 @@ const PACKET_VERSION: u8 = 1;
 pub struct Packet {
     ver: u8,
     pub addr: u64,
+    msg_id: u64,
     pub data: Vec<u8>,
 }
 
 impl Packet {
-    pub fn new(addr: u64, data: &[u8]) -> Packet {
+    pub fn new(addr: u64, msg_id: u64, data: &[u8]) -> Packet {
         Packet {
             ver: PACKET_VERSION,
             addr,
+            msg_id,
             data: data.to_vec(),
         }
     }
@@ -43,7 +46,13 @@ impl Packet {
 }
 impl core::fmt::Display for Packet {
     fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::result::Result<(), core::fmt::Error> {
-        write!(fmt, "addr={} len={}", self.addr, self.data.len())
+        write!(
+            fmt,
+            "addr={} id={} len={}",
+            self.addr,
+            self.msg_id,
+            self.data.len()
+        )
     }
 }
 
@@ -85,26 +94,24 @@ impl PacketStream {
         reader.read_buf(&mut data).await?;
 
         let (wire, _): (Packet, usize) = bincode::decode_from_slice(&data, self.config)?;
-
+        info!("<-- {wire}");
         Ok(wire)
     }
 
-    pub async fn write<W>(&self, writer: &mut W, addr: u64, data: &[u8]) -> Result<()>
+    pub async fn write<W>(&self, writer: &mut W, msg_id: u64, addr: u64, data: &[u8]) -> Result<()>
     where
         W: AsyncWriteExt + Unpin,
     {
-        let wire = Packet::new(addr, data);
+        let wire = Packet::new(addr, msg_id, data);
+
+        info!("--> {wire}");
 
         let encoded: Vec<u8> = bincode::encode_to_vec(&wire, self.config)?;
         let encoded_len = encoded.len() as i32;
-
         let len_bytes = encoded_len.to_be_bytes();
 
         writer.write_all(&len_bytes).await?;
         writer.write_all(&encoded).await?;
-
-        info!("wrote {} bytes to addr={addr}", encoded.len());
-
         Ok(())
     }
 }

@@ -24,8 +24,8 @@ where
     println!("    {key:<20}{v}");
 }
 
-pub fn setup_logger() -> Result<()> {
-    let log_level = match cfg!(debug_assertions) {
+pub fn setup_logger(verbose: bool) -> Result<()> {
+    let log_level = match verbose {
         true => log::LevelFilter::Info,
         false => log::LevelFilter::Warn,
     };

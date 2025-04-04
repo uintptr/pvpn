@@ -1,4 +1,9 @@
-use std::{collections::HashMap, io, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    io::{self, ErrorKind},
+    sync::Arc,
+    time::Duration,
+};
 
 use clap::Parser;
 
@@ -24,7 +29,7 @@ use tunnel::{
 const DEF_SERVER_ADDR: &str = "127.0.0.1";
 
 #[derive(Parser)]
-#[command(version, about, long_about = None)]
+#[command(version, about, long_about = None, color=clap::ColorChoice::Never)]
 struct UserArgs {
     /// listening port
     #[arg(long, default_value_t=DEF_SERVER_PORT)]
@@ -58,24 +63,21 @@ async fn endpoint_loop(
     let mut buf: [u8; 8196] = [0; 8196];
     let ps = PacketStream::new();
 
+    let mut msg_id = 0;
+
     loop {
         select! {
-            ret = rx.recv() => {
-                let packet = match ret{
-                    Some(v) => v,
-                    None => {
-                        error!("Unable to read from mpsc");
-                        return Err(Error::ReadFailure);
-                    }
-                };
-
-                info!("writing {} bytes to the endpoint", packet.data.len());
+            Some(packet) = rx.recv() => {
                 stream.writable().await?;
-                stream.write_all(&packet.data).await?;
+                match stream.write_all(&packet.data).await{
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!("---> {e}");
+                        return Err(e.into());
+                    }
+                }
             }
             ret = stream.readable() => {
-
-                info!("something to read from the endpoint");
 
                 match ret{
                     Ok(_) => {
@@ -83,27 +85,33 @@ async fn endpoint_loop(
 
                         match ret{
                             Ok(n) => {
-
                                 if 0 == n{
                                     return Err(Error::EOF)
                                 }
-
-                                info!("read {n} bytes");
-
                                 let mut writer = swriter_mtx.lock().await;
 
-                                ps.write(&mut *writer, addr, &buf[..n]).await?;
+                                match ps.write(&mut *writer, msg_id, addr, &buf[..n]).await{
+                                    Ok(_) => {},
+                                    Err(e) => {
+                                        error!("--------> {e}");
+                                        return Err(e.into());
+                                    }
+                                }
+                            }
+                            Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                                continue;
                             }
                             Err(e) => { return Err(e.into()) }
                         }
                     }
                     Err(e) => {
-                        error!("{e}");
                         return Err(e.into())
                     }
                 }
             }
         }
+
+        msg_id += 1;
     }
 }
 
@@ -125,7 +133,6 @@ async fn read_loop(server_stream: TcpStream, server_addr: &str) -> Result<()> {
             {
                 match ret{
                     Ok(packet) => {
-
                         let tx = conn_table.entry(packet.addr).or_insert_with(||{
                             let (tx, rx) = mpsc::channel(32);
                             let server_addr = server_addr.to_string();
@@ -147,7 +154,6 @@ async fn read_loop(server_stream: TcpStream, server_addr: &str) -> Result<()> {
 
                             tx
                         });
-
                         tx.send(packet).await?;
                     }
                     Err(e) =>{
@@ -175,7 +181,7 @@ async fn main() -> Result<()> {
     printkv("Enpoint", &endpoint_addr);
     printkv("Verbose", args.verbose);
 
-    setup_logger()?;
+    setup_logger(args.verbose)?;
 
     loop {
         match TcpStream::connect(&server_addr).await {
