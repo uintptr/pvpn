@@ -381,6 +381,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "pvpn"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "chrono",
+ "clap",
+ "derive_more",
+ "fern",
+ "hex",
+ "log",
+ "tokio",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -479,20 +493,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "tunnel"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "chrono",
- "clap",
- "derive_more",
- "fern",
- "hex",
- "log",
- "tokio",
 ]
 
 [[package]]

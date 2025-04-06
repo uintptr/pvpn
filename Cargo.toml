@@ -1,15 +1,7 @@
 [package]
-name = "tunnel"
+name = "pvpn"
 version = "0.1.0"
 edition = "2021"
-
-[[bin]]
-name = "client"
-path = "src/bin/client/client.rs"
-
-[[bin]]
-name = "server"
-path = "src/bin/server/server.rs"
 
 [dependencies]
 bincode = "2.0.1"

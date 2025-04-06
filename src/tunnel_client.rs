@@ -5,8 +5,6 @@ use std::{
     time::Duration,
 };
 
-use clap::Parser;
-
 use log::{error, info};
 use tokio::{
     io::{split, AsyncWriteExt, WriteHalf},
@@ -19,46 +17,19 @@ use tokio::{
     task::JoinSet,
     time::sleep,
 };
-use tunnel::{
-    common_const::DEF_SERVER_PORT,
+
+use crate::{
     error::{Error, Result},
-    logging::{display_error, printkv, setup_logger},
     packet::PacketStream,
 };
 
-const DEF_SERVER_ADDR: &str = "127.0.0.1";
-
-#[derive(Parser)]
-#[command(version, about, long_about = None, color=clap::ColorChoice::Never)]
-struct UserArgs {
-    /// listening port
-    #[arg(long, default_value_t=DEF_SERVER_PORT)]
-    server_port: u16,
-
-    /// listening address
-    #[arg(long, default_value=DEF_SERVER_ADDR)]
-    server_address: String,
-
-    // endpoint address
-    #[arg(long)]
-    endpoint_address: String,
-
-    // endpoint port
-    #[arg(long)]
-    endpoint_port: u16,
-
-    /// verbose
-    #[arg(short, long)]
-    verbose: bool,
-}
-
-async fn endpoint_loop(
-    endpoint: String,
+async fn server_loop(
+    server: String,
     addr: u64,
-    swriter_mtx: Arc<Mutex<WriteHalf<TcpStream>>>,
+    twriter_mtx: Arc<Mutex<WriteHalf<TcpStream>>>,
     mut rx: Receiver<(u64, Vec<u8>)>,
 ) -> Result<()> {
-    let mut stream = TcpStream::connect(&endpoint).await?;
+    let mut stream = TcpStream::connect(&server).await?;
 
     let mut buf: [u8; 8196] = [0; 8196];
     let mut ps = PacketStream::new();
@@ -88,9 +59,9 @@ async fn endpoint_loop(
                                 if 0 == n{
                                     return Err(Error::EOF)
                                 }
-                                let mut writer = swriter_mtx.lock().await;
+                                let mut twriter = twriter_mtx.lock().await;
 
-                                ps.write(&mut *writer, msg_id, addr, &buf[..n]).await?;
+                                ps.write(&mut *twriter, msg_id, addr, &buf[..n]).await?;
                             }
                             Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
                                 continue;
@@ -109,38 +80,38 @@ async fn endpoint_loop(
     }
 }
 
-async fn read_loop(server_stream: TcpStream, server_addr: &str) -> Result<()> {
+async fn read_loop(tunnel: TcpStream, server: &str) -> Result<()> {
     let mut ps = PacketStream::new();
 
     info!("client is ready");
 
-    let (mut sreader, swriter) = split(server_stream);
+    let (mut treader, twriter) = split(tunnel);
 
-    let iwriter = Arc::new(Mutex::new(swriter));
+    let twriter = Arc::new(Mutex::new(twriter));
 
     let mut threads: JoinSet<u64> = JoinSet::new();
     let mut conn_table: HashMap<u64, Sender<(u64, Vec<u8>)>> = HashMap::new();
 
     loop {
         select! {
-            ret = ps.read(&mut sreader) =>
+            ret = ps.read(&mut treader) =>
             {
                 match ret{
                     Ok((addr,data)) => {
                         let tx = conn_table.entry(addr).or_insert_with(||{
                             let (tx, rx) = mpsc::channel(32);
-                            let server_addr = server_addr.to_string();
-                            let iwriter = iwriter.clone();
+                            let server_addr = server.to_string();
+                            let twriter = twriter.clone();
 
                             threads.spawn(async move {
-                                let res = endpoint_loop(server_addr, addr,iwriter, rx).await;
+                                let res = server_loop(server_addr, addr,twriter, rx).await;
                                 match &res{
                                     Ok(_) => {}
                                     Err(Error::EOF) => {
-                                        info!("internet client EOF");
+                                        info!("server EOF");
                                     }
                                     Err(e) => {
-                                        error!("thread returned error={e}");
+                                        error!("server thread returned error={e}");
                                     }
                                 }
                                 addr
@@ -162,35 +133,22 @@ async fn read_loop(server_stream: TcpStream, server_addr: &str) -> Result<()> {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let args = UserArgs::parse();
-
-    println!("Tunnel:");
-
-    let server_addr = format!("{}:{}", args.server_address, args.server_port);
-    let endpoint_addr = format!("{}:{}", args.endpoint_address, args.endpoint_port);
-
-    printkv("Server", &server_addr);
-    printkv("Enpoint", &endpoint_addr);
-    printkv("Verbose", args.verbose);
-
-    setup_logger(args.verbose)?;
-
+pub async fn client_main(tunnel: &str, server: &str, reconnect_delay: u64) -> Result<()> {
     loop {
-        match TcpStream::connect(&server_addr).await {
+        match TcpStream::connect(&tunnel).await {
             Ok(stream) => {
-                let res = read_loop(stream, &endpoint_addr).await;
+                let res = read_loop(stream, &server).await;
                 info!("client disconnected. error: {:?}", res);
             }
             Err(e) if e.kind() == io::ErrorKind::ConnectionRefused => {
                 // silenced
             }
             Err(e) => {
-                display_error(&e);
                 error!("{e}");
             }
         }
-        sleep(Duration::from_millis(500)).await;
+
+        // reconnect
+        sleep(Duration::from_millis(reconnect_delay)).await;
     }
 }
