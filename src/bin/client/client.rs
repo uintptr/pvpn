@@ -9,12 +9,12 @@ use clap::Parser;
 
 use log::{error, info};
 use tokio::{
-    io::{AsyncWriteExt, WriteHalf, split},
+    io::{split, AsyncWriteExt, WriteHalf},
     net::TcpStream,
     select,
     sync::{
-        Mutex,
         mpsc::{self, Receiver, Sender},
+        Mutex,
     },
     task::JoinSet,
     time::sleep,
@@ -23,7 +23,7 @@ use tunnel::{
     common_const::DEF_SERVER_PORT,
     error::{Error, Result},
     logging::{display_error, printkv, setup_logger},
-    packet::{Packet, PacketStream},
+    packet::PacketStream,
 };
 
 const DEF_SERVER_ADDR: &str = "127.0.0.1";
@@ -56,20 +56,20 @@ async fn endpoint_loop(
     endpoint: String,
     addr: u64,
     swriter_mtx: Arc<Mutex<WriteHalf<TcpStream>>>,
-    mut rx: Receiver<Packet>,
+    mut rx: Receiver<(u64, Vec<u8>)>,
 ) -> Result<()> {
     let mut stream = TcpStream::connect(&endpoint).await?;
 
     let mut buf: [u8; 8196] = [0; 8196];
-    let ps = PacketStream::new();
+    let mut ps = PacketStream::new();
 
     let mut msg_id = 0;
 
     loop {
         select! {
-            Some(packet) = rx.recv() => {
+            Some((_,data)) = rx.recv() => {
                 stream.writable().await?;
-                match stream.write_all(&packet.data).await{
+                match stream.write_all(&data).await{
                     Ok(_) => {}
                     Err(e) => {
                         error!("---> {e}");
@@ -90,13 +90,7 @@ async fn endpoint_loop(
                                 }
                                 let mut writer = swriter_mtx.lock().await;
 
-                                match ps.write(&mut *writer, msg_id, addr, &buf[..n]).await{
-                                    Ok(_) => {},
-                                    Err(e) => {
-                                        error!("--------> {e}");
-                                        return Err(e.into());
-                                    }
-                                }
+                                ps.write(&mut *writer, msg_id, addr, &buf[..n]).await?;
                             }
                             Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
                                 continue;
@@ -116,7 +110,7 @@ async fn endpoint_loop(
 }
 
 async fn read_loop(server_stream: TcpStream, server_addr: &str) -> Result<()> {
-    let ps = PacketStream::new();
+    let mut ps = PacketStream::new();
 
     info!("client is ready");
 
@@ -125,21 +119,21 @@ async fn read_loop(server_stream: TcpStream, server_addr: &str) -> Result<()> {
     let iwriter = Arc::new(Mutex::new(swriter));
 
     let mut threads: JoinSet<u64> = JoinSet::new();
-    let mut conn_table: HashMap<u64, Sender<Packet>> = HashMap::new();
+    let mut conn_table: HashMap<u64, Sender<(u64, Vec<u8>)>> = HashMap::new();
 
     loop {
         select! {
             ret = ps.read(&mut sreader) =>
             {
                 match ret{
-                    Ok(packet) => {
-                        let tx = conn_table.entry(packet.addr).or_insert_with(||{
+                    Ok((addr,data)) => {
+                        let tx = conn_table.entry(addr).or_insert_with(||{
                             let (tx, rx) = mpsc::channel(32);
                             let server_addr = server_addr.to_string();
                             let iwriter = iwriter.clone();
 
                             threads.spawn(async move {
-                                let res = endpoint_loop(server_addr, packet.addr,iwriter, rx).await;
+                                let res = endpoint_loop(server_addr, addr,iwriter, rx).await;
                                 match &res{
                                     Ok(_) => {}
                                     Err(Error::EOF) => {
@@ -149,12 +143,12 @@ async fn read_loop(server_stream: TcpStream, server_addr: &str) -> Result<()> {
                                         error!("thread returned error={e}");
                                     }
                                 }
-                                packet.addr
+                                addr
                             });
 
                             tx
                         });
-                        tx.send(packet).await?;
+                        tx.send((addr,data)).await?;
                     }
                     Err(e) =>{
                         break Err(e)

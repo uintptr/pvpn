@@ -1,17 +1,18 @@
 #![allow(unused)]
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
+    io::{Cursor, Read, Seek},
+    mem,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     ptr::hash,
 };
 
 use bincode::{
-    BorrowDecode, Decode, Encode,
     config::{self, Configuration},
     enc::write,
+    BorrowDecode, Decode, Encode,
 };
-use bytes::{BufMut, BytesMut};
-use log::info;
+use log::{error, info};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::TcpStream,
@@ -20,38 +21,35 @@ use tokio::{
 use crate::error::{Error, Result};
 
 const PACKET_VERSION: u8 = 1;
+const SCRATCH_SIZE: usize = 8 * 1024;
 
-#[derive(Encode, Decode, Debug, Clone)]
+#[derive(Encode, Decode, PartialEq, Debug)]
 pub struct Packet {
-    ver: u8,
+    pub ver: u8,
     pub addr: u64,
-    msg_id: u64,
-    pub data: Vec<u8>,
+    pub msg_id: u64,
+    pub data_len: u32,
 }
 
 impl Packet {
-    pub fn new(addr: u64, msg_id: u64, data: &[u8]) -> Packet {
-        Packet {
+    pub fn new(addr: u64, msg_id: u64, data_len: usize) -> Result<Packet> {
+        let data_len: u32 = data_len.try_into()?;
+
+        Ok(Packet {
             ver: PACKET_VERSION,
             addr,
             msg_id,
-            data: data.to_vec(),
-        }
-    }
-
-    pub fn hex_dump(&self) {
-        let hex = pretty_hex::pretty_hex(&self.data);
-        print!("{hex}");
+            data_len,
+        })
     }
 }
+
 impl core::fmt::Display for Packet {
     fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::result::Result<(), core::fmt::Error> {
         write!(
             fmt,
             "addr={} id={} len={}",
-            self.addr,
-            self.msg_id,
-            self.data.len()
+            self.addr, self.msg_id, self.data_len
         )
     }
 }
@@ -79,39 +77,53 @@ impl PacketStream {
         hasher.finish()
     }
 
-    pub async fn read<R>(&self, reader: &mut R) -> Result<Packet>
+    pub async fn read<'a, R>(&mut self, reader: &mut R) -> Result<(u64, Vec<u8>)>
     where
         R: AsyncReadExt + Unpin,
     {
-        let mut buf: [u8; 4] = [0; 4];
+        let mut buf: [u8; 64] = [0; 64];
+        let len: usize = reader.read_u32().await?.try_into()?;
 
-        reader.read_exact(&mut buf).await?;
+        if len > buf.len() {
+            return Err(Error::BufferTooSmall {
+                max: buf.len(),
+                actual: len,
+            });
+        }
 
-        let req_size = i32::from_be_bytes(buf) as usize;
+        reader.read_exact(&mut buf[0..len]).await?;
 
-        let mut data: Vec<u8> = Vec::with_capacity(req_size);
+        let (packet, _): (Packet, usize) =
+            bincode::decode_from_slice(&buf[0..len], config::standard())?;
 
-        reader.read_buf(&mut data).await?;
+        let data_size: usize = packet.data_len.try_into()?;
 
-        let (wire, _): (Packet, usize) = bincode::decode_from_slice(&data, self.config)?;
-        info!("<-- {wire}");
-        Ok(wire)
+        let mut data = vec![0u8; data_size];
+        reader.read_exact(&mut data).await?;
+
+        Ok((packet.addr, data))
     }
 
-    pub async fn write<W>(&self, writer: &mut W, msg_id: u64, addr: u64, data: &[u8]) -> Result<()>
+    pub async fn write<W>(
+        &mut self,
+        writer: &mut W,
+        msg_id: u64,
+        addr: u64,
+        data: &[u8],
+    ) -> Result<()>
     where
         W: AsyncWriteExt + Unpin,
     {
-        let wire = Packet::new(addr, msg_id, data);
+        let p = Packet::new(addr, msg_id, data.len())?;
 
-        info!("--> {wire}");
+        let mut buf: [u8; 64] = [0; 64];
 
-        let encoded: Vec<u8> = bincode::encode_to_vec(&wire, self.config)?;
-        let encoded_len = encoded.len() as i32;
-        let len_bytes = encoded_len.to_be_bytes();
+        let enc_len = bincode::encode_into_slice(p, &mut buf, config::standard())?;
+        let enc_len_32: u32 = enc_len.try_into()?;
 
-        writer.write_all(&len_bytes).await?;
-        writer.write_all(&encoded).await?;
+        writer.write_u32(enc_len_32).await?;
+        writer.write_all(&buf[0..enc_len]).await?;
+        writer.write_all(data).await?;
         Ok(())
     }
 }

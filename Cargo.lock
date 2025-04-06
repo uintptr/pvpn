@@ -372,12 +372,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b3cff922bd51709b605d9ead9aa71031d81447142d828eb4a6eba76fe619f9b"
 
 [[package]]
-name = "pretty-hex"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbc83ee4a840062f368f9096d80077a9841ec117e17e7f700df81958f1451254"
-
-[[package]]
 name = "proc-macro2"
 version = "1.0.94"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -492,14 +486,12 @@ name = "tunnel"
 version = "0.1.0"
 dependencies = [
  "bincode",
- "bytes",
  "chrono",
  "clap",
  "derive_more",
  "fern",
  "hex",
  "log",
- "pretty-hex",
  "tokio",
 ]
 

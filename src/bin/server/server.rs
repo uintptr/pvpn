@@ -4,12 +4,12 @@ use clap::Parser;
 
 use log::{error, info};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt, WriteHalf, split},
+    io::{split, AsyncReadExt, AsyncWriteExt, WriteHalf},
     net::{TcpListener, TcpStream},
     select,
     sync::{
-        Mutex,
         mpsc::{self, Receiver, Sender},
+        Mutex,
     },
     task::JoinSet,
 };
@@ -17,7 +17,7 @@ use tunnel::{
     common_const::DEF_SERVER_PORT,
     error::{Error, Result},
     logging::{printkv, setup_logger},
-    packet::{Packet, PacketStream},
+    packet::PacketStream,
 };
 
 const DEF_INTERNET_PORT: u16 = 8080;
@@ -52,19 +52,19 @@ async fn internet_loop(
     cwriter_mtx: Arc<Mutex<WriteHalf<TcpStream>>>,
     addr: u64,
     mut istream: TcpStream,
-    mut rx: Receiver<Packet>,
+    mut rx: Receiver<(u64, Vec<u8>)>,
 ) -> Result<()> {
     let mut buf: [u8; 8196] = [0; 8196];
 
-    let ps = PacketStream::new();
+    let mut ps = PacketStream::new();
 
     let mut msg_id = 0;
 
     loop {
         select! {
-            Some(packet) = rx.recv() => {
+            Some((_, data)) = rx.recv() => {
                 istream.writable().await?;
-                istream.write_all(&packet.data).await?;
+                istream.write_all(&data).await?;
             }
             ret = istream.readable() =>
             {
@@ -93,13 +93,13 @@ async fn client_handler(client: TcpStream, iaddr: &str, iport: u16) -> Result<()
 
     let ilistener = TcpListener::bind(iaddr_str).await?;
 
-    let ps = PacketStream::new();
+    let mut ps = PacketStream::new();
 
     let (mut creader, cwriter) = split(client);
     let cwriter_mtx = Arc::new(Mutex::new(cwriter));
 
     let mut threads: JoinSet<u64> = JoinSet::new();
-    let mut conn_table: HashMap<u64, Sender<Packet>> = HashMap::new();
+    let mut conn_table: HashMap<u64, Sender<(u64, Vec<u8>)>> = HashMap::new();
 
     info!("server is ready");
 
@@ -134,18 +134,19 @@ async fn client_handler(client: TcpStream, iaddr: &str, iport: u16) -> Result<()
                     break Err(Error::ConnectionNotFound)
                 }
             }
-            result = ps.read(&mut creader) => {
-                match result{
-                    Ok(packet) => {
+            res = ps.read(&mut creader) => {
+
+                match res{
+                    Ok((addr,data)) => {
                         //
                         // client send data for the internet connection
                         //
-                        match conn_table.get(&packet.addr){
+                        match conn_table.get(&addr){
                             Some(tx) => {
-                                tx.send(packet).await?
+                                tx.send((addr,data)).await?;
                             }
                             None => {
-                                error!("unable to find addr={}",packet.addr );
+                                error!("unable to find addr={}",addr );
                                 break Err(Error::ConnectionNotFound)
                             }
                         }
