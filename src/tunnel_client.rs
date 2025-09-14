@@ -47,6 +47,7 @@ async fn server_loop(
                         return Err(e.into());
                     }
                 }
+                stream.flush().await?;
             }
             ret = stream.readable() => {
 

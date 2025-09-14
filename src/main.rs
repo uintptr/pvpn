@@ -74,12 +74,16 @@ enum Commands {
 }
 
 fn setup_logger(verbose: bool) -> Result<()> {
-    let level = match verbose {
-        true => log::LevelFilter::Info,
-        false => log::LevelFilter::Error,
+    let level = if verbose {
+        log::LevelFilter::Info
+    } else {
+        log::LevelFilter::Error
     };
 
-    StaplesLogger::new().with_log_level(level).with_stderr().start()?;
+    StaplesLogger::new()
+        .with_log_level(level)
+        .with_stderr()
+        .start()?;
     Ok(())
 }
 

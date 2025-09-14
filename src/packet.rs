@@ -124,6 +124,7 @@ impl PacketStream {
         writer.write_u32(enc_len_32).await?;
         writer.write_all(&buf[0..enc_len]).await?;
         writer.write_all(data).await?;
+        writer.flush().await?;
         Ok(())
     }
 }
