@@ -8,9 +8,9 @@ use std::{
 };
 
 use bincode::{
+    BorrowDecode, Decode, Encode,
     config::{self, Configuration},
     enc::write,
-    BorrowDecode, Decode, Encode,
 };
 use log::{error, info};
 use tokio::{

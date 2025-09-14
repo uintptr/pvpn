@@ -1,11 +1,7 @@
-use pvpn::{
-    error::Result,
-    logging::{printkv, setup_logger},
-    tunnel_client::client_main,
-    tunnel_server::server_main,
-};
+use pvpn::{error::Result, tunnel_client::client_main, tunnel_server::server_main};
 
 use clap::{Parser, Subcommand};
+use rstaples::{logging::StaplesLogger, staples::printkv};
 
 pub const DEF_SERVER_PORT: u16 = 1414;
 const DEF_INTERNET_PORT: u16 = 8080;
@@ -75,6 +71,16 @@ enum Commands {
 
     /// server
     Server(ServerArgs),
+}
+
+fn setup_logger(verbose: bool) -> Result<()> {
+    let level = match verbose {
+        true => log::LevelFilter::Info,
+        false => log::LevelFilter::Error,
+    };
+
+    StaplesLogger::new().with_log_level(level).with_stderr().start()?;
+    Ok(())
 }
 
 #[tokio::main]

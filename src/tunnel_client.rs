@@ -7,12 +7,12 @@ use std::{
 
 use log::{error, info};
 use tokio::{
-    io::{split, AsyncWriteExt, WriteHalf},
+    io::{AsyncWriteExt, WriteHalf, split},
     net::TcpStream,
     select,
     sync::{
-        mpsc::{self, Receiver, Sender},
         Mutex,
+        mpsc::{self, Receiver, Sender},
     },
     task::JoinSet,
     time::sleep,

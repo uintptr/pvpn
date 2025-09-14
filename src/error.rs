@@ -41,6 +41,8 @@ pub enum Error {
     PacketEncodeFailure(EncodeError),
     #[from]
     MpScError(tokio::sync::mpsc::error::SendError<(u64, Vec<u8>)>),
+    #[from]
+    Staplers(rstaples::error::Error),
 }
 
 impl core::fmt::Display for Error {
