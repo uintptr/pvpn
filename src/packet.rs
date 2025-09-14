@@ -77,7 +77,7 @@ impl PacketStream {
         hasher.finish()
     }
 
-    pub async fn read<'a, R>(&mut self, reader: &mut R) -> Result<(u64, Vec<u8>)>
+    pub async fn read<R>(&mut self, reader: &mut R) -> Result<(u64, Vec<u8>)>
     where
         R: AsyncReadExt + Unpin,
     {

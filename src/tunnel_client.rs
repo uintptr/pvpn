@@ -137,7 +137,7 @@ pub async fn client_main(tunnel: &str, server: &str, reconnect_delay: u64) -> Re
     loop {
         match TcpStream::connect(&tunnel).await {
             Ok(stream) => {
-                let res = read_loop(stream, &server).await;
+                let res = read_loop(stream, server).await;
                 info!("client disconnected. error: {:?}", res);
             }
             Err(e) if e.kind() == io::ErrorKind::ConnectionRefused => {
