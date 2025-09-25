@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 bincode = "2.0.1"
 chrono = "0.4.42"
-clap = { version = "4.5.47", features = ["derive"] }
+clap = { version = "4.5.48", features = ["derive"] }
 derive_more = { version = "2.0.1", features = ["from"] }
 fern = "0.7.1"
 hex = "0.4.3"

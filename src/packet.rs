@@ -46,11 +46,7 @@ impl Packet {
 
 impl core::fmt::Display for Packet {
     fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::result::Result<(), core::fmt::Error> {
-        write!(
-            fmt,
-            "addr={} id={} len={}",
-            self.addr, self.msg_id, self.data_len
-        )
+        write!(fmt, "addr={} id={} len={}", self.addr, self.msg_id, self.data_len)
     }
 }
 
@@ -93,8 +89,7 @@ impl PacketStream {
 
         reader.read_exact(&mut buf[0..len]).await?;
 
-        let (packet, _): (Packet, usize) =
-            bincode::decode_from_slice(&buf[0..len], config::standard())?;
+        let (packet, _): (Packet, usize) = bincode::decode_from_slice(&buf[0..len], config::standard())?;
 
         let data_size: usize = packet.data_len.try_into()?;
 
@@ -104,13 +99,7 @@ impl PacketStream {
         Ok((packet.addr, data))
     }
 
-    pub async fn write<W>(
-        &mut self,
-        writer: &mut W,
-        msg_id: u64,
-        addr: u64,
-        data: &[u8],
-    ) -> Result<()>
+    pub async fn write<W>(&mut self, writer: &mut W, msg_id: u64, addr: u64, data: &[u8]) -> Result<()>
     where
         W: AsyncWriteExt + Unpin,
     {

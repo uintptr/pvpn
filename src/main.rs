@@ -80,10 +80,7 @@ fn setup_logger(verbose: bool) -> Result<()> {
         log::LevelFilter::Error
     };
 
-    StaplesLogger::new()
-        .with_log_level(level)
-        .with_stderr()
-        .start()?;
+    StaplesLogger::new().with_log_level(level).with_stderr().start()?;
     Ok(())
 }
 

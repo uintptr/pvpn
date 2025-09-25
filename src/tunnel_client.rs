@@ -43,7 +43,7 @@ async fn server_loop(
                 match stream.write_all(&data).await{
                     Ok(_) => {}
                     Err(e) => {
-                        error!("---> {e}");
+                        error!("{e}");
                         return Err(e.into());
                     }
                 }
@@ -97,7 +97,7 @@ async fn read_loop(tunnel: TcpStream, server: &str) -> Result<()> {
         select! {
             ret = ps.read(&mut treader) =>
             {
-                match ret{
+                match ret {
                     Ok((addr,data)) => {
                         let tx = conn_table.entry(addr).or_insert_with(||{
                             let (tx, rx) = mpsc::channel(32);
