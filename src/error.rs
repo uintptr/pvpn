@@ -43,6 +43,8 @@ pub enum Error {
     MpScError(tokio::sync::mpsc::error::SendError<(u64, Vec<u8>)>),
     #[from]
     Staplers(rstaples::error::Error),
+    #[from]
+    AddrError(std::net::AddrParseError),
 }
 
 impl core::fmt::Display for Error {

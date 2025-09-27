@@ -1,60 +1,116 @@
-use std::{collections::HashMap, sync::Arc};
-
 use log::{error, info};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt, WriteHalf, split},
+use mio::{
+    Events, Interest, Poll, Token,
     net::{TcpListener, TcpStream},
-    select,
-    sync::{
-        Mutex,
-        mpsc::{self, Receiver, Sender},
-    },
-    task::JoinSet,
 };
+use std::{collections::HashMap, io::Read};
 
-use crate::{
-    error::{Error, Result},
-    packet::PacketStream,
-};
+use crate::error::{Error, Result};
 
-async fn client_loop(
-    cwriter_mtx: Arc<Mutex<WriteHalf<TcpStream>>>,
-    addr: u64,
-    mut istream: TcpStream,
-    mut rx: Receiver<(u64, Vec<u8>)>,
-) -> Result<()> {
-    let mut buf: [u8; 8196] = [0; 8196];
+const TUNNEL: Token = Token(1);
+const TUNNEL_CLIENT: Token = Token(2);
+const SERVER: Token = Token(3);
 
-    let mut ps = PacketStream::new();
+struct InternetClient {
+    id: usize,
+    stream: TcpStream,
+    buffer: [u8; 8196],
+}
 
-    let mut msg_id = 0;
-
-    loop {
-        select! {
-            Some((_, data)) = rx.recv() => {
-                istream.writable().await?;
-                istream.write_all(&data).await?;
-            }
-            ret = istream.readable() =>
-            {
-                if let Err(e) = ret{
-                    return Err(e.into());
-                }
-
-                let len = istream.read(&mut buf).await?;
-
-                if 0 == len {
-                    break Err(Error::EOF);
-                }
-                let mut writer = cwriter_mtx.lock().await;
-                ps.write(&mut *writer, msg_id,addr, &buf[0..len]).await?;
-            }
+impl InternetClient {
+    pub fn new(stream: mio::net::TcpStream, id: usize) -> Self {
+        Self {
+            id,
+            stream,
+            buffer: [0; 8196],
         }
-
-        msg_id += 1;
     }
 }
 
+fn tunnel_handler(server: &str, tunnel: &str) -> Result<()> {
+    info!("starting internet listener on {server}");
+
+    let mut server_added: bool = false;
+
+    let mut poll = Poll::new()?;
+
+    let mut events = Events::with_capacity(128);
+
+    let tunnel_addr = tunnel.parse()?;
+    let server_addr = server.parse()?;
+
+    let mut tunnel_listener = TcpListener::bind(tunnel_addr)?;
+    let mut server_listener = TcpListener::bind(server_addr)?;
+
+    poll.registry().register(&mut tunnel_listener, TUNNEL, Interest::READABLE)?;
+
+    let mut token_id: usize = 3;
+
+    let mut iclients = HashMap::new();
+
+    loop {
+        info!("clients: {}", iclients.len());
+
+        poll.poll(&mut events, None)?;
+
+        for event in events.iter() {
+            if TUNNEL == event.token() {
+                let (mut istream, iaddr) = tunnel_listener.accept()?;
+
+                info!("tunnel connected: {:?}", iaddr);
+
+                poll.registry().register(&mut istream, TUNNEL_CLIENT, Interest::READABLE)?;
+
+                if !server_added {
+                    poll.registry().register(&mut server_listener, SERVER, Interest::READABLE)?;
+                    server_added = true;
+                }
+
+                let iclient = InternetClient::new(istream, token_id);
+                iclients.insert(TUNNEL_CLIENT, iclient);
+            } else if SERVER == event.token() {
+                let (mut istream, iaddr) = server_listener.accept()?;
+                info!("internet connected: {:?} (token={token_id})", iaddr);
+
+                let token = Token(token_id);
+
+                poll.registry().register(&mut istream, token.clone(), Interest::READABLE)?;
+
+                let iclient = InternetClient::new(istream, token_id);
+                iclients.insert(token, iclient);
+
+                token_id += 1;
+            } else {
+                let client = match iclients.get_mut(&event.token()) {
+                    Some(v) => v,
+                    None => {
+                        iclients.remove(&event.token());
+                        continue;
+                    }
+                };
+
+                let read_len = match client.stream.read(&mut client.buffer) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        error!("error reading from id={} ({e})", client.id);
+                        iclients.remove(&event.token());
+                        continue;
+                    }
+                };
+
+                // EOF
+                if 0 == read_len {
+                    iclients.remove(&event.token());
+                    continue;
+                }
+
+                info!("read {read_len} bytes");
+            }
+        }
+    }
+}
+
+/*
 async fn tunnel_handler(tunnel: TcpStream, server: &str) -> Result<()> {
     info!("starting internet listener on {server}");
 
@@ -129,15 +185,11 @@ async fn tunnel_handler(tunnel: TcpStream, server: &str) -> Result<()> {
         }
     }
 }
+*/
 
-pub async fn server_main(server: &str, tunnel: &str) -> Result<()> {
-    let listener = TcpListener::bind(tunnel).await?;
-
+pub fn server_main(server: &str, tunnel: &str) -> Result<()> {
     loop {
-        let (stream, tunnel_addr) = listener.accept().await?;
-        info!("tunnel connected: {:?}", tunnel_addr);
-
-        match tunnel_handler(stream, server).await {
+        match tunnel_handler(server, tunnel) {
             Ok(_) => info!("tunnel disconnected"),
             Err(Error::EOF) => info!("tunnel disconnected (EOF)"),
             Err(e) => error!("tunnel error: {}", e),

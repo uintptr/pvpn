@@ -112,7 +112,7 @@ async fn main() -> Result<()> {
 
             setup_logger(opt.verbose)?;
 
-            server_main(&server, &tunnel).await
+            server_main(&server, &tunnel)
         }
     }
 }

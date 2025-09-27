@@ -1,5 +1,6 @@
 #![allow(unused)]
 use std::{
+    fmt::Display,
     hash::{DefaultHasher, Hash, Hasher},
     io::{Cursor, Read, Seek},
     mem,
@@ -44,7 +45,7 @@ impl Packet {
     }
 }
 
-impl core::fmt::Display for Packet {
+impl Display for Packet {
     fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::result::Result<(), core::fmt::Error> {
         write!(fmt, "addr={} id={} len={}", self.addr, self.msg_id, self.data_len)
     }
