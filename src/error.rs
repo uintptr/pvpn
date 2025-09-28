@@ -8,8 +8,9 @@ use derive_more::From;
 #[derive(Debug, From)]
 pub enum Error {
     ReadFailure,
-    EOF,
+    Eof,
     ConnectionNotFound,
+    ClientNotFound,
     BufferTooSmall {
         max: usize,
         actual: usize,

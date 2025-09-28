@@ -2,7 +2,7 @@
 use std::{
     fmt::Display,
     hash::{DefaultHasher, Hash, Hasher},
-    io::{Cursor, Read, Seek},
+    io::{Cursor, Read, Seek, Write},
     mem,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     ptr::hash,
@@ -42,6 +42,44 @@ impl Packet {
             msg_id,
             data_len,
         })
+    }
+
+    pub fn write(&self, writer: &mut mio::net::TcpStream, data: &[u8]) -> Result<()> {
+        let mut buf: [u8; 64] = [0; 64];
+
+        let enc_len = bincode::encode_into_slice(self, &mut buf, config::standard())?;
+        let enc_len_32: u32 = enc_len.try_into()?;
+        let env_len_data = enc_len_32.to_be_bytes();
+
+        writer.write_all(&env_len_data)?;
+        writer.write_all(&buf[0..enc_len])?; // packet header
+        writer.write_all(data)?;
+        writer.flush()?;
+        Ok(())
+    }
+
+    pub fn read_header(reader: &mut mio::net::TcpStream) -> Result<Packet> {
+        let mut buf32bit: [u8; 4] = [0; 4];
+
+        reader.read_exact(&mut buf32bit)?;
+
+        let len: u32 = u32::from_be_bytes(buf32bit);
+        let len: usize = len.try_into()?;
+
+        let mut buf: [u8; 64] = [0; 64];
+
+        if len > buf.len() {
+            return Err(Error::BufferTooSmall {
+                max: buf.len(),
+                actual: len,
+            });
+        }
+
+        reader.read_exact(&mut buf[0..len])?;
+
+        let (packet, _): (Packet, usize) = bincode::decode_from_slice(&buf[0..len], config::standard())?;
+
+        Ok(packet)
     }
 }
 

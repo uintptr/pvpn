@@ -10,6 +10,7 @@ clap = { version = "4.5.48", features = ["derive"] }
 derive_more = { version = "2.0.1", features = ["from"] }
 fern = "0.7.1"
 futures = "0.3.31"
+hexdump = "0.1.2"
 log = "0.4.28"
 mio = "1.0.4"
 rstaples = "0.1.3"
