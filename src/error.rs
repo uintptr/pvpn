@@ -41,8 +41,6 @@ pub enum Error {
     #[from]
     PacketEncodeFailure(EncodeError),
     #[from]
-    MpScError(tokio::sync::mpsc::error::SendError<(u64, Vec<u8>)>),
-    #[from]
     Staplers(rstaples::error::Error),
     #[from]
     AddrError(std::net::AddrParseError),
@@ -50,6 +48,11 @@ pub enum Error {
 
 impl core::fmt::Display for Error {
     fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::result::Result<(), core::fmt::Error> {
-        write!(fmt, "{self:?}")
+        match self {
+            Error::Io(io) => match io.kind() {
+                e => write!(fmt, "{e}"),
+            },
+            _ => write!(fmt, "{self:?}"),
+        }
     }
 }

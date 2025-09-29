@@ -3,20 +3,37 @@ use std::{
     io::{Read, Write},
 };
 
+use log::info;
 use mio::{Token, net::TcpStream};
 
 use crate::{
     error::{Error, Result},
-    packet::Packet,
+    packet::{Packet, PacketMessage, PacketStream},
 };
 
 pub struct ClientStream {
     stream: TcpStream,
+    ps: PacketStream,
+    data: Vec<u8>,
+    connected: bool,
 }
 
 impl ClientStream {
-    pub fn new(stream: TcpStream) -> Self {
-        Self { stream }
+    pub fn new(stream: TcpStream, token: Token) -> Self {
+        let ps = PacketStream::new(token.into());
+
+        let data = Vec::new();
+
+        Self {
+            stream,
+            ps,
+            data,
+            connected: false,
+        }
+    }
+
+    pub fn with_data(&mut self, data: &[u8]) {
+        self.data.extend_from_slice(data);
     }
 }
 
@@ -37,6 +54,39 @@ impl TokenStreams {
         self.map.insert(token, client);
     }
 
+    pub fn contains_token(&self, token: &Token) -> bool {
+        self.map.contains_key(token)
+    }
+
+    pub fn connected(&mut self, token: Token) -> Result<()> {
+        let client = match self.map.get_mut(&token) {
+            Some(v) => v,
+            None => return Err(Error::ClientNotFound),
+        };
+
+        if client.connected {
+            // nothing to do
+            return Ok(());
+        }
+
+        client.connected = true;
+
+        if client.data.len() > 0 {
+            match client.stream.write_all(&client.data) {
+                Ok(_) => {
+                    client.data.clear();
+                    Ok(())
+                }
+                Err(e) => {
+                    self.map.remove(&token);
+                    Err(e.into())
+                }
+            }
+        } else {
+            Ok(())
+        }
+    }
+
     pub fn write(&mut self, token: Token, buffer: &[u8]) -> Result<()> {
         let client = match self.map.get_mut(&token) {
             Some(v) => v,
@@ -52,23 +102,28 @@ impl TokenStreams {
         }
     }
 
-    pub fn write_packet(&mut self, src: Token, dst: Token, msg_id: u64, data: &[u8]) -> Result<()> {
+    pub fn write_message(&mut self, src: Token, dst: Token, msg: PacketMessage) -> Result<()> {
+        let dst_addr: usize = dst.into();
+
         let client = match self.map.get_mut(&src) {
             Some(v) => v,
             None => return Err(Error::ClientNotFound),
         };
 
-        let dst: usize = dst.into();
+        info!("sending {msg} to {dst_addr}");
 
-        let p = match Packet::new(dst as u64, msg_id, data.len()) {
-            Ok(v) => v,
-            Err(e) => {
-                self.map.remove(&src);
-                return Err(e);
-            }
+        client.ps.write_message(&mut client.stream, dst_addr as u64, msg)
+    }
+
+    pub fn write_packet(&mut self, src: Token, dst: Token, data: &[u8]) -> Result<()> {
+        let dst_addr: usize = dst.into();
+
+        let src_stream = match self.map.get_mut(&src) {
+            Some(v) => v,
+            None => return Err(Error::ClientNotFound),
         };
 
-        let ret = p.write(&mut client.stream, data);
+        let ret = src_stream.ps.write_data(&mut src_stream.stream, dst_addr as u64, data);
 
         if ret.is_err() {
             self.map.remove(&src);

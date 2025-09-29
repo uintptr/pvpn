@@ -57,7 +57,7 @@ fn tunnel_handler(server: &str, tunnel: &str) -> Result<()> {
                     server_added = true;
                 }
 
-                let client = ClientStream::new(tstream);
+                let client = ClientStream::new(tstream, TUNNEL_STREAM);
                 streams.add(TUNNEL_STREAM, client);
             } else if INTERNET_PORT == event.token() {
                 let (mut istream, iaddr) = server_listener.accept()?;
@@ -68,7 +68,7 @@ fn tunnel_handler(server: &str, tunnel: &str) -> Result<()> {
                 poll.registry()
                     .register(&mut istream, token.clone(), Interest::READABLE | Interest::WRITABLE)?;
 
-                let iclient = ClientStream::new(istream);
+                let iclient = ClientStream::new(istream, token);
                 streams.add(token, iclient);
 
                 token_id += 1;
@@ -107,7 +107,7 @@ fn tunnel_handler(server: &str, tunnel: &str) -> Result<()> {
 
                     info!("read {read_len} bytes from internet {:?}", event.token());
 
-                    streams.write_packet(TUNNEL_STREAM, event.token(), 0, &read_buffer[0..read_len])?;
+                    streams.write_packet(TUNNEL_STREAM, event.token(), &read_buffer[0..read_len])?;
                 } else if event.is_writable() {
                     //
                     // writable... feels like we should use this
