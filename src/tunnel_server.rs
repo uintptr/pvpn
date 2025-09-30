@@ -57,7 +57,7 @@ fn tunnel_handler(server: &str, tunnel: &str) -> Result<()> {
                     server_added = true;
                 }
 
-                let client = ClientStream::new(tstream, TUNNEL_STREAM);
+                let client = ClientStream::new(tstream);
                 streams.add(TUNNEL_STREAM, client);
             } else if INTERNET_PORT == event.token() {
                 let (mut istream, iaddr) = server_listener.accept()?;
@@ -68,7 +68,7 @@ fn tunnel_handler(server: &str, tunnel: &str) -> Result<()> {
                 poll.registry()
                     .register(&mut istream, token.clone(), Interest::READABLE | Interest::WRITABLE)?;
 
-                let iclient = ClientStream::new(istream, token);
+                let iclient = ClientStream::new(istream);
                 streams.add(token, iclient);
 
                 token_id += 1;

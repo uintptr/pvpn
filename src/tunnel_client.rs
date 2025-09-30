@@ -17,11 +17,12 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
 
     let mut events = Events::with_capacity(128);
 
-    poll.registry().register(&mut tstream, TUNNEL_STREAM, Interest::READABLE)?;
+    poll.registry()
+        .register(&mut tstream, TUNNEL_STREAM, Interest::READABLE | Interest::WRITABLE)?;
 
     let mut streams = TokenStreams::new();
 
-    streams.add(TUNNEL_STREAM, ClientStream::new(tstream, TUNNEL_STREAM));
+    streams.add(TUNNEL_STREAM, ClientStream::new(tstream));
 
     let mut read_buffer: [u8; 8196] = [0; 8196];
 
@@ -29,42 +30,51 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
         poll.poll(&mut events, None)?;
 
         for event in events.iter() {
-            if TUNNEL_STREAM == event.token() {
-                let (read_len, token) = match streams.read_packet(event.token(), &mut read_buffer) {
+            if TUNNEL_STREAM == event.token() && event.is_readable() {
+                let (read_len, dst_token) = match streams.read_packet(event.token(), &mut read_buffer) {
                     Ok(v) => v,
                     Err(e) => return Err(e.into()),
                 };
 
-                info!("{read_len} for {:?}", token);
+                info!("{read_len} bytes for {:?}", dst_token);
 
-                if !streams.contains_token(&token) {
+                if !streams.contains_token(&dst_token) {
                     //
                     // Connect the server
                     //
+                    info!("{dst_token:?} is not connected to {server}");
+
                     let addr = server.parse()?;
 
                     let mut sstream = TcpStream::connect(addr)?;
 
-                    poll.registry()
-                        .register(&mut sstream, token.clone(), Interest::READABLE | Interest::WRITABLE)?;
+                    poll.registry().register(
+                        &mut sstream,
+                        dst_token.clone(),
+                        Interest::READABLE | Interest::WRITABLE,
+                    )?;
 
-                    let mut client = ClientStream::new(sstream, token);
+                    let mut client = ClientStream::new(sstream);
 
-                    client.with_data(&read_buffer[0..read_len]);
+                    client.push_data(&read_buffer[0..read_len]);
 
-                    streams.add(token, client);
+                    streams.add(dst_token, client);
                 } else {
+                    info!("{dst_token:?} is already connected to {server}");
                     //
                     // Send the data to the connected server
                     //
-                    if let Err(e) = streams.write(token, &read_buffer[0..read_len]) {
-                        error!("Unable to send {read_len} to {server} for {token:?} ({e})");
+                    if let Err(e) = streams.write(dst_token, &read_buffer[0..read_len]) {
+                        error!("Unable to send {read_len} to {server} for {dst_token:?} ({e})");
                         //
                         // This is fatal to the tunel if we can't send the message back
                         //
-                        streams.write_message(TUNNEL_STREAM, token, PacketMessage::Disconnected)?;
+                        streams.write_message(TUNNEL_STREAM, dst_token, PacketMessage::Disconnected)?;
                     }
                 }
+            } else if TUNNEL_STREAM == event.token() && event.is_writable() {
+                info!("{TUNNEL_STREAM:?} is writiable");
+                streams.flush(TUNNEL_STREAM)?;
             } else {
                 if event.is_readable() {
                     let read_len = match streams.read(event.token(), &mut read_buffer) {
@@ -73,18 +83,17 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
                             warn!("Connection terminated ({e})");
                             let msg = e.into();
                             streams.write_message(TUNNEL_STREAM, event.token(), msg)?;
+                            streams.remove(event.token());
                             continue;
                         }
                     };
 
                     info!("{read_len} from {:?}", event.token());
+
+                    streams.write_packet(TUNNEL_STREAM, event.token(), &read_buffer[0..read_len])?;
                 } else {
                     info!("{:?} is writable", event.token());
-
-                    if let Err(e) = streams.connected(event.token()) {
-                        error!("Unable to write to {server} for {:?} ({e})", event.token());
-                        streams.write_message(TUNNEL_STREAM, event.token(), PacketMessage::WriteFailure)?;
-                    }
+                    streams.flush(event.token())?;
                 }
             }
         }

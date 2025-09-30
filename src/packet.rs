@@ -51,19 +51,17 @@ pub struct Packet {
     pub ver: u8,
     pub msg: PacketMessage,
     pub addr: u64,
-    pub msg_id: u64,
     pub data_len: u32,
 }
 
 impl Packet {
-    pub fn new(addr: u64, msg: PacketMessage, msg_id: u64, data_len: usize) -> Result<Packet> {
+    pub fn new(addr: u64, msg: PacketMessage, data_len: usize) -> Result<Packet> {
         let data_len: u32 = data_len.try_into()?;
 
         Ok(Packet {
             ver: PACKET_VERSION,
             msg,
             addr,
-            msg_id,
             data_len,
         })
     }
@@ -109,13 +107,12 @@ impl Packet {
 
 impl Display for Packet {
     fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::result::Result<(), core::fmt::Error> {
-        write!(fmt, "addr={} id={} len={}", self.addr, self.msg_id, self.data_len)
+        write!(fmt, "addr={} len={}", self.addr, self.data_len)
     }
 }
 
 pub struct PacketStream {
     pub address: u64,
-    msg_id: u64,
     config: Configuration,
 }
 
@@ -123,12 +120,14 @@ impl PacketStream {
     pub fn new(address: usize) -> Self {
         Self {
             address: address as u64,
-            msg_id: 0,
             config: config::standard(),
         }
     }
 
-    fn write_header(&mut self, writer: &mut TcpStream, packet: Packet) -> Result<()> {
+    fn write_header<W>(writer: &mut W, packet: Packet) -> Result<()>
+    where
+        W: Write,
+    {
         let mut buf: [u8; 64] = [0; 64];
 
         let enc_len = bincode::encode_into_slice(packet, &mut buf, config::standard())?;
@@ -176,20 +175,24 @@ impl PacketStream {
         Ok(packet_len)
     }
 
-    pub fn write_data(&mut self, writer: &mut TcpStream, addr: u64, data: &[u8]) -> Result<()> {
-        let packet = Packet::new(addr, PacketMessage::Data, self.msg_id, data.len())?;
-        self.msg_id += 1;
+    pub fn write_data<W>(writer: &mut W, addr: u64, data: &[u8]) -> Result<()>
+    where
+        W: Write,
+    {
+        let packet = Packet::new(addr, PacketMessage::Data, data.len())?;
 
-        self.write_header(writer, packet);
+        PacketStream::write_header(writer, packet);
 
         writer.write_all(data)?;
         writer.flush()?;
         Ok(())
     }
 
-    pub fn write_message(&mut self, writer: &mut TcpStream, addr: u64, message: PacketMessage) -> Result<()> {
-        let packet = Packet::new(addr, message, self.msg_id, 0)?;
-        self.msg_id += 1;
-        self.write_header(writer, packet)
+    pub fn write_message<W>(writer: &mut W, addr: u64, message: PacketMessage) -> Result<()>
+    where
+        W: Write,
+    {
+        let packet = Packet::new(addr, message, 0)?;
+        PacketStream::write_header(writer, packet)
     }
 }
