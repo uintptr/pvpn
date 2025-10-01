@@ -38,6 +38,8 @@ fn tunnel_handler(server: &str, tunnel: &str) -> Result<()> {
 
     let mut read_buffer: [u8; 8196] = [0; 8196];
 
+    println!("-----------------------------SERVER-----------------------------");
+
     loop {
         poll.poll(&mut events, None)?;
 
