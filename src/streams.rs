@@ -203,7 +203,10 @@ impl TokenStreams {
             PacketMessage::Data => {
                 let data_len = p.data_len as usize;
 
-                client.stream.read_exact(&mut buffer[0..data_len])?;
+                if let Err(e) = client.stream.read_exact(&mut buffer[0..data_len]) {
+                    self.remove(Token(p.addr as usize));
+                    return Err(e.into());
+                }
 
                 Ok((data_len, Token(p.addr as usize)))
             }
@@ -231,7 +234,7 @@ impl TokenStreams {
 
         // EOF
         if 0 == read_len {
-            warn!("received EOF");
+            warn!("received EOF for token={}", token.0);
             self.remove(token);
             return Err(Error::Eof);
         }

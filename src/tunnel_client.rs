@@ -26,6 +26,8 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
 
     let mut read_buffer: [u8; 8196] = [0; 8196];
 
+    println!("-----------------------------CLIENT-----------------------------");
+
     loop {
         poll.poll(&mut events, None)?;
 
@@ -69,7 +71,11 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
                         //
                         // This is fatal to the tunel if we can't send the message back
                         //
-                        streams.write_message(TUNNEL_STREAM, dst_token, PacketMessage::Disconnected)?;
+
+                        if let Err(e) = streams.write_message(TUNNEL_STREAM, dst_token, PacketMessage::Disconnected) {
+                            error!("unable to write message for {} ({e})", dst_token.0);
+                            return Err(e.into());
+                        }
                     }
                 }
             } else if TUNNEL_STREAM == event.token() && event.is_writable() {
@@ -82,18 +88,28 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
                         Err(e) => {
                             warn!("Connection terminated ({e})");
                             let msg = e.into();
-                            streams.write_message(TUNNEL_STREAM, event.token(), msg)?;
-                            streams.remove(event.token());
+
+                            if let Err(e) = streams.write_message(TUNNEL_STREAM, event.token(), msg) {
+                                error!("unable to write message for {} ({e})", event.token().0);
+                                return Err(e.into());
+                            }
                             continue;
                         }
                     };
 
                     info!("{read_len} from {:?}", event.token());
 
-                    streams.write_packet(TUNNEL_STREAM, event.token(), &read_buffer[0..read_len])?;
+                    if let Err(e) = streams.write_packet(TUNNEL_STREAM, event.token(), &read_buffer[0..read_len]) {
+                        error!("unable to write packet for {} ({e})", event.token().0);
+                        return Err(e.into());
+                    }
                 } else {
                     info!("{:?} is writable", event.token());
-                    streams.flush(event.token())?;
+
+                    if let Err(e) = streams.flush(event.token()) {
+                        error!("flush failure for {} {e}", event.token().0);
+                        return Err(e.into());
+                    }
                 }
             }
         }
