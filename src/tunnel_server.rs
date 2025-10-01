@@ -39,8 +39,6 @@ fn tunnel_handler(server: &str, tunnel: &str) -> Result<()> {
     let mut read_buffer: [u8; 8196] = [0; 8196];
 
     loop {
-        info!("Streams: {}", streams.len());
-
         poll.poll(&mut events, None)?;
 
         for event in events.iter() {
@@ -49,11 +47,15 @@ fn tunnel_handler(server: &str, tunnel: &str) -> Result<()> {
 
                 info!("tunnel connected: {:?}", iaddr);
 
-                poll.registry().register(&mut tstream, TUNNEL_STREAM, Interest::READABLE)?;
+                poll.registry()
+                    .register(&mut tstream, TUNNEL_STREAM, Interest::READABLE | Interest::WRITABLE)?;
 
                 if !server_added {
-                    poll.registry()
-                        .register(&mut server_listener, INTERNET_PORT, Interest::READABLE)?;
+                    poll.registry().register(
+                        &mut server_listener,
+                        INTERNET_PORT,
+                        Interest::READABLE | Interest::WRITABLE,
+                    )?;
                     server_added = true;
                 }
 
@@ -72,13 +74,9 @@ fn tunnel_handler(server: &str, tunnel: &str) -> Result<()> {
                 streams.add(token, iclient);
 
                 token_id += 1;
-            } else if TUNNEL_STREAM == event.token() {
+            } else if TUNNEL_STREAM == event.token() && event.is_readable() {
                 let (read_len, token) = match streams.read_packet(TUNNEL_STREAM, &mut read_buffer) {
                     Ok(v) => v,
-                    Err(Error::Eof) => {
-                        warn!("Connection terminated");
-                        continue;
-                    }
                     Err(e) => {
                         error!("read error: {e}");
                         continue;
@@ -91,6 +89,8 @@ fn tunnel_handler(server: &str, tunnel: &str) -> Result<()> {
                     error!("Unable to write {read_len} to {:?} ({e})", token);
                     continue;
                 }
+            } else if TUNNEL_STREAM == event.token() && event.is_readable() {
+                info!("{} is writable", TUNNEL_STREAM.0);
             } else {
                 if event.is_readable() {
                     let read_len = match streams.read(event.token(), &mut read_buffer) {
@@ -112,6 +112,9 @@ fn tunnel_handler(server: &str, tunnel: &str) -> Result<()> {
                     //
                     // writable... feels like we should use this
                     //
+                    if let Err(e) = streams.flush(event.token()) {
+                        error!("flush({}) => {e}", event.token().0)
+                    }
                 }
             }
         }

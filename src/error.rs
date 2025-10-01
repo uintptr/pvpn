@@ -5,12 +5,17 @@ use std::num::TryFromIntError;
 use bincode::error::{DecodeError, EncodeError};
 use derive_more::From;
 
+use crate::packet::PacketMessage;
+
 #[derive(Debug, From)]
 pub enum Error {
     ReadFailure,
     Eof,
     ConnectionNotFound,
     ClientNotFound,
+    TunnelError {
+        msg: PacketMessage,
+    },
     BufferTooSmall {
         max: usize,
         actual: usize,

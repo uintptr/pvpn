@@ -132,6 +132,7 @@ impl TokenStreams {
     }
 
     pub fn remove(&mut self, token: Token) {
+        info!("removing token={}", token.0);
         self.map.remove(&token);
     }
 
@@ -198,11 +199,19 @@ impl TokenStreams {
 
         let p = Packet::read_header(&mut client.stream)?;
 
-        let data_len = p.data_len as usize;
+        match p.msg {
+            PacketMessage::Data => {
+                let data_len = p.data_len as usize;
 
-        client.stream.read_exact(&mut buffer[0..data_len])?;
+                client.stream.read_exact(&mut buffer[0..data_len])?;
 
-        Ok((data_len, Token(p.addr as usize)))
+                Ok((data_len, Token(p.addr as usize)))
+            }
+            _ => {
+                self.remove(Token(p.addr as usize));
+                Err(Error::TunnelError { msg: p.msg })
+            }
+        }
     }
 
     pub fn read(&mut self, token: Token, buffer: &mut [u8]) -> Result<usize> {
@@ -211,10 +220,19 @@ impl TokenStreams {
             None => return Err(Error::ClientNotFound),
         };
 
-        let read_len = client.stream.read(buffer)?;
+        let read_len = match client.stream.read(buffer) {
+            Ok(v) => v,
+            Err(e) => {
+                error!("read failure ({e})");
+                self.remove(token);
+                return Err(e.into());
+            }
+        };
 
         // EOF
         if 0 == read_len {
+            warn!("received EOF");
+            self.remove(token);
             return Err(Error::Eof);
         }
 
