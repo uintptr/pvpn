@@ -93,6 +93,10 @@ fn tunnel_handler(server: &str, tunnel: &str) -> Result<()> {
                 }
             } else if TUNNEL_STREAM == event.token() && event.is_readable() {
                 info!("{} is writable", TUNNEL_STREAM.0);
+                if let Err(e) = streams.flush(TUNNEL_STREAM) {
+                    error!("flush failure for {} {e}", TUNNEL_STREAM.0);
+                    return Err(e.into());
+                }
             } else {
                 if event.is_readable() {
                     let read_len = match streams.read(event.token(), &mut read_buffer) {
