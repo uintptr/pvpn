@@ -29,13 +29,19 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
     println!("-----------------------------CLIENT-----------------------------");
 
     loop {
-        poll.poll(&mut events, None)?;
+        if let Err(e) = poll.poll(&mut events, None) {
+            error!("poll() failure {e}");
+            return Err(e.into());
+        }
 
         for event in events.iter() {
             if TUNNEL_STREAM == event.token() && event.is_readable() {
-                let (read_len, dst_token) = match streams.read_packet(event.token(), &mut read_buffer) {
+                let (read_len, dst_token) = match streams.read_packet(TUNNEL_STREAM, &mut read_buffer) {
                     Ok(v) => v,
-                    Err(e) => return Err(e.into()),
+                    Err(e) => {
+                        error!("Unable to read packet from {} ({e})", TUNNEL_STREAM.0);
+                        return Err(e.into());
+                    }
                 };
 
                 info!("{read_len} bytes for {:?}", dst_token);
@@ -80,7 +86,11 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
                 }
             } else if TUNNEL_STREAM == event.token() && event.is_writable() {
                 info!("{TUNNEL_STREAM:?} is writiable");
-                streams.flush(TUNNEL_STREAM)?;
+
+                if let Err(e) = streams.flush(TUNNEL_STREAM) {
+                    error!("flush failure for {} {e}", TUNNEL_STREAM.0);
+                    return Err(e.into());
+                }
             } else {
                 if event.is_readable() {
                     let read_len = match streams.read(event.token(), &mut read_buffer) {
@@ -103,7 +113,7 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
                         error!("unable to write packet for {} ({e})", event.token().0);
                         return Err(e.into());
                     }
-                } else {
+                } else if event.is_writable() {
                     info!("{:?} is writable", event.token());
 
                     if let Err(e) = streams.flush(event.token()) {

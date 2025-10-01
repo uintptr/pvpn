@@ -34,15 +34,23 @@ impl std::io::Write for ClientStream {
             }
         };
 
-        //
-        // save whatever we couldn't send
-        //
-        self.data.extend_from_slice(&buf[written_len..buf.len()]);
+        if written_len == buf.len() {
+            // wrote everything to the stream
+        } else {
+            info!("{}..{}", written_len, buf.len());
+
+            //
+            // save whatever we couldn't send
+            //
+            self.data.extend_from_slice(&buf[written_len..buf.len()]);
+        }
 
         Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
+        info!("flush({})", self.data.len());
+
         if self.data.is_empty() {
             return Ok(());
         }

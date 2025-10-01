@@ -97,9 +97,14 @@ impl Packet {
             });
         }
 
-        reader.read_exact(&mut buf[0..len])?;
+        if let Err(e) = reader.read_exact(&mut buf[0..len]) {
+            error!("unable to read header len={len}");
+            return Err(e.into());
+        }
 
         let (packet, _): (Packet, usize) = bincode::decode_from_slice(&buf[0..len], config::standard())?;
+
+        info!("packet read");
 
         Ok(packet)
     }
@@ -136,7 +141,6 @@ impl PacketStream {
 
         writer.write_all(&env_len_data)?;
         writer.write_all(&buf[0..enc_len])?; // packet header
-        writer.flush()?;
         Ok(())
     }
 
@@ -184,7 +188,6 @@ impl PacketStream {
         PacketStream::write_header(writer, packet);
 
         writer.write_all(data)?;
-        writer.flush()?;
         Ok(())
     }
 
