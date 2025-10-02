@@ -184,7 +184,7 @@ impl TokenStreams {
 
         let p = Packet::new_message(dst.0 as u64, msg);
 
-        p.write(&mut client.stream)
+        p.write(client)
     }
 
     pub fn write_packet(&mut self, src: Token, dst: Token, data: &[u8]) -> Result<()> {
