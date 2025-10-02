@@ -206,7 +206,7 @@ impl TokenStreams {
 
         let p = Packet::new_data(dst_addr, data_len);
 
-        p.write(&mut client.stream)?;
+        p.write(client)?;
         client.stream.write_all(data)?;
         Ok(())
     }
