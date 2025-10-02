@@ -71,6 +71,16 @@ pub struct Packet {
     pub data_len: u32,
 }
 
+impl Display for Packet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "ver={} msg={} addr={} len={}",
+            self.ver, self.msg, self.addr, self.data_len
+        )
+    }
+}
+
 impl Packet {
     pub fn new(addr: u64, msg: PacketMessage, data_len: u32) -> Packet {
         Self {
@@ -146,15 +156,12 @@ impl Packet {
         W: Write,
     {
         let mut hdr: [u8; HEADER_SIZE] = [0; HEADER_SIZE];
+
+        info!("=> {}", self);
+
         self.encode(&mut hdr)?;
         writer.write_all(&hdr)?;
         Ok(())
-    }
-}
-
-impl Display for Packet {
-    fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::result::Result<(), core::fmt::Error> {
-        write!(fmt, "addr={} len={}", self.addr, self.data_len)
     }
 }
 

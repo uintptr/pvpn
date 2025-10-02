@@ -184,8 +184,6 @@ impl TokenStreams {
 
         let p = Packet::new_message(dst.0 as u64, msg);
 
-        info!("sending {msg} to {}", dst.0);
-
         p.write(&mut client.stream)
     }
 
