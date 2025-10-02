@@ -9,7 +9,7 @@ use mio::{Token, net::TcpStream};
 
 use crate::{
     error::{Error, Result},
-    packet::{Packet, PacketMessage, PacketStream},
+    packet::{Packet, PacketMessage},
 };
 
 pub struct ClientStream {
@@ -177,26 +177,33 @@ impl TokenStreams {
     }
 
     pub fn write_message(&mut self, src: Token, dst: Token, msg: PacketMessage) -> Result<()> {
-        let dst_addr: usize = dst.into();
-
         let client = match self.map.get_mut(&src) {
             Some(v) => v,
             None => return Err(Error::ClientNotFound),
         };
 
-        info!("sending {msg} to {dst_addr}");
-        PacketStream::write_message(client, dst_addr as u64, msg)
+        let p = Packet::new_message(dst.0 as u64, msg);
+
+        info!("sending {msg} to {}", dst.0);
+
+        p.write(&mut client.stream)
     }
 
     pub fn write_packet(&mut self, src: Token, dst: Token, data: &[u8]) -> Result<()> {
-        let dst_addr: usize = dst.into();
+        let dst_addr: u64 = dst.0.try_into()?;
 
         let client = match self.map.get_mut(&src) {
             Some(v) => v,
             None => return Err(Error::ClientNotFound),
         };
 
-        PacketStream::write_data(client, dst_addr as u64, data)
+        let data_len: u32 = data.len().try_into()?;
+
+        let p = Packet::new_data(dst_addr, data_len);
+
+        p.write(&mut client.stream)?;
+        client.stream.write_all(data)?;
+        Ok(())
     }
 
     pub fn read_packet(&mut self, token: Token, buffer: &mut [u8]) -> Result<(usize, Token)> {
@@ -205,7 +212,7 @@ impl TokenStreams {
             None => return Err(Error::ClientNotFound),
         };
 
-        let p = Packet::read_header(&mut client.stream)?;
+        let p = Packet::from_reader(&mut client.stream)?;
 
         match p.msg {
             PacketMessage::Data => {

@@ -2,7 +2,6 @@ pub type Result<T> = core::result::Result<T, Error>;
 
 use std::num::TryFromIntError;
 
-use bincode::error::{DecodeError, EncodeError};
 use derive_more::From;
 
 use crate::packet::PacketMessage;
@@ -28,6 +27,9 @@ pub enum Error {
         expected: usize,
         actual: usize,
     },
+    InvalidMessageType {
+        msg: u8,
+    },
     //
     // 2d party
     //
@@ -41,10 +43,6 @@ pub enum Error {
     //
     #[from]
     LoggingError(log::SetLoggerError),
-    #[from]
-    PacketDecodeFailure(DecodeError),
-    #[from]
-    PacketEncodeFailure(EncodeError),
     #[from]
     Staplers(rstaples::error::Error),
     #[from]
