@@ -20,6 +20,7 @@ pub struct ClientStream {
 
 impl std::io::Write for ClientStream {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        /*
         let written_len = match self.stream.write(buf) {
             Ok(v) => v,
             Err(e) if e.kind() == ErrorKind::WouldBlock => {
@@ -33,6 +34,9 @@ impl std::io::Write for ClientStream {
                 return Err(e.into());
             }
         };
+        */
+
+        let written_len = 0;
 
         if written_len == buf.len() {
             // wrote everything to the stream
@@ -172,6 +176,7 @@ impl TokenStreams {
         };
 
         client.write(buffer)?;
+        client.flush()?;
 
         Ok(())
     }
@@ -184,7 +189,9 @@ impl TokenStreams {
 
         let p = Packet::new_message(dst.0 as u64, msg);
 
-        p.write(client)
+        p.write(client)?;
+        client.flush()?;
+        Ok(())
     }
 
     pub fn write_packet(&mut self, src: Token, dst: Token, data: &[u8]) -> Result<()> {
