@@ -45,6 +45,11 @@ fn tunnel_handler(server: &str, tunnel: &str) -> Result<()> {
 
         for event in events.iter() {
             if TUNNEL_PORT == event.token() {
+                //
+                // This is the pvpn client connecting
+                //
+                // TODO: remove the listening port once we have a client
+                //
                 let (mut tstream, iaddr) = tunnel_listener.accept()?;
 
                 info!("tunnel connected: {:?}", iaddr);
@@ -63,7 +68,12 @@ fn tunnel_handler(server: &str, tunnel: &str) -> Result<()> {
 
                 let client = ClientStream::new(tstream);
                 streams.add(TUNNEL_STREAM, client);
+                streams.remove(TUNNEL_PORT);
+                poll.registry().deregister(&mut tunnel_listener)?;
             } else if INTERNET_PORT == event.token() {
+                //
+                //
+                //
                 let (mut istream, iaddr) = server_listener.accept()?;
                 info!("internet connected: {:?} (token={token_id})", iaddr);
 
@@ -134,6 +144,9 @@ pub fn server_main(server: &str, tunnel: &str) -> Result<()> {
             Err(Error::Eof) => info!("tunnel disconnected (EOF)"),
             Err(Error::Io(e)) => match e.kind() {
                 ErrorKind::AddrInUse => {
+                    //
+                    // this one is fatal because it'll never work
+                    //
                     error!("tunnel error: {}", e);
                     break Err(e.into());
                 }
