@@ -77,11 +77,11 @@ fn tunnel_handler(server: &str, tunnel: &str) -> Result<()> {
 
                 token_id += 1;
             } else if TUNNEL_STREAM == event.token() && event.is_readable() {
-                let (read_len, token) = match streams.read_packet(TUNNEL_STREAM, &mut read_buffer) {
+                let (read_len, token) = match streams.read_packet() {
                     Ok(v) => v,
                     Err(e) => {
                         error!("read error: {e}");
-                        continue;
+                        return Err(e);
                     }
                 };
 

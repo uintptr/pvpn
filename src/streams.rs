@@ -3,98 +3,62 @@ use std::{
     io::{ErrorKind, Read, Write},
 };
 
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 use log::{error, info, warn};
 use mio::{Token, net::TcpStream};
 
 use crate::{
     error::{Error, Result},
-    packet::{Packet, PacketMessage},
+    packet::{HEADER_SIZE, Packet, PacketMessage},
 };
+
+const CLIENT_BUFFER_SIZE: usize = 8 * 1024;
 
 pub struct ClientStream {
     stream: TcpStream,
-    data: BytesMut,
+    out_bytes: BytesMut,
     pub is_connected: bool,
-}
-
-impl std::io::Write for ClientStream {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        /*
-        let written_len = match self.stream.write(buf) {
-            Ok(v) => v,
-            Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                //
-                // socket not ready
-                //
-                0
-            }
-            Err(e) => {
-                error!("write() returned {e}");
-                return Err(e.into());
-            }
-        };
-        */
-
-        let written_len = 0;
-
-        if written_len == buf.len() {
-            // wrote everything to the stream
-        } else {
-            info!("{}..{}", written_len, buf.len());
-
-            //
-            // save whatever we couldn't send
-            //
-            self.data.extend_from_slice(&buf[written_len..buf.len()]);
-        }
-
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        info!("flush({})", self.data.len());
-
-        if self.data.is_empty() {
-            return Ok(());
-        }
-
-        let written_len = match self.stream.write(&self.data) {
-            Ok(v) => v,
-            Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                //
-                // socket not ready
-                //
-                0
-            }
-            Err(e) => {
-                error!("write() returned {e}");
-                return Err(e.into());
-            }
-        };
-
-        info!("wrote {} / {}", written_len, self.data.len());
-
-        //
-        // save whatever we couldn't send
-        //
-        self.data.clear();
-
-        Ok(())
-    }
 }
 
 impl ClientStream {
     pub fn new(stream: TcpStream) -> Self {
         Self {
             stream,
-            data: BytesMut::new(),
+            out_bytes: BytesMut::new(),
             is_connected: false,
         }
     }
 
+    fn flush_pre(&mut self) -> Result<()> {
+        info!("flush({})", self.out_bytes.len());
+
+        if self.out_bytes.is_empty() {
+            return Ok(());
+        }
+
+        let written_len = match self.stream.write(&self.out_bytes) {
+            Ok(v) => v,
+            Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                //
+                // socket not ready
+                //
+                0
+            }
+            Err(e) => {
+                error!("write() returned {e}");
+                return Err(e.into());
+            }
+        };
+
+        info!("wrote {} / {}", written_len, self.out_bytes.len());
+
+        self.out_bytes.clear();
+
+        Ok(())
+    }
+
     pub fn push_data(&mut self, data: &[u8]) {
-        self.data.extend_from_slice(data)
+        self.out_bytes.extend_from_slice(data)
     }
 
     pub fn complete_connect(&mut self) -> Result<()> {
@@ -122,17 +86,26 @@ impl ClientStream {
         }
 
         self.is_connected = true;
-        Ok(())
+
+        self.flush_pre()
     }
 }
 
 pub struct TokenStreams {
     map: HashMap<Token, ClientStream>,
+    tun_buffer: [u8; CLIENT_BUFFER_SIZE],
+    tun_input: BytesMut,
 }
 
 impl TokenStreams {
     pub fn new() -> Self {
-        Self { map: HashMap::new() }
+        let tun_input = BytesMut::new();
+
+        Self {
+            map: HashMap::new(),
+            tun_buffer: [0; CLIENT_BUFFER_SIZE],
+            tun_input,
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -163,7 +136,7 @@ impl TokenStreams {
         }
 
         if client.is_connected {
-            client.flush()?;
+            client.stream.flush()?;
         }
 
         Ok(())
@@ -175,8 +148,8 @@ impl TokenStreams {
             None => return Err(Error::ClientNotFound),
         };
 
-        client.write(buffer)?;
-        client.flush()?;
+        client.stream.write_all(buffer)?;
+        client.stream.flush()?;
 
         Ok(())
     }
@@ -187,15 +160,17 @@ impl TokenStreams {
             None => return Err(Error::ClientNotFound),
         };
 
-        let p = Packet::new_message(dst.0 as u64, msg);
+        let addr: u32 = dst.0.try_into()?;
 
-        p.write(client)?;
-        client.flush()?;
+        let p = Packet::new_message(addr, msg);
+
+        p.write(&mut client.stream)?;
+        client.stream.flush()?;
         Ok(())
     }
 
     pub fn write_packet(&mut self, src: Token, dst: Token, data: &[u8]) -> Result<()> {
-        let dst_addr: u64 = dst.0.try_into()?;
+        let dst_addr: u32 = dst.0.try_into()?;
 
         let client = match self.map.get_mut(&src) {
             Some(v) => v,
@@ -206,35 +181,124 @@ impl TokenStreams {
 
         let p = Packet::new_data(dst_addr, data_len);
 
-        p.write(client)?;
-        client.write_all(data)?;
-        client.flush()?;
+        p.write(&mut client.stream)?;
+        client.stream.write_all(data)?;
+        client.stream.flush()?;
         Ok(())
     }
 
-    pub fn read_packet(&mut self, token: Token, buffer: &mut [u8]) -> Result<(usize, Token)> {
-        let client = match self.map.get_mut(&token) {
+    pub fn read_packet(&mut self) -> Result<(usize, Token)> {
+        if self.tun_input.len() < HEADER_SIZE {
+            // nothing to read
+            return Ok((0, Token(0)));
+        }
+
+        let p = Packet::from_buffer(&self.tun_input)?;
+
+        let token = Token(p.addr as usize);
+
+        //
+        // Do we also have the data available
+        //
+        let data_len: usize = p.data_len.try_into()?;
+        let total_length = HEADER_SIZE + data_len;
+
+        if total_length > self.tun_input.len() {
+            //
+            // Not enough data
+            //
+            return Ok((0, token));
+        }
+
+        //
+        // "consume" the header
+        //
+        self.tun_input.advance(HEADER_SIZE);
+
+        match self.map.get_mut(&token) {
+            Some(v) => {
+                //
+                // Client exists, just send the data to its stream
+                //
+                let ret = v.stream.write_all(&self.tun_input[0..data_len]);
+
+                //
+                // regardless if this worked or not we consume the data
+                //
+                self.tun_input.advance(data_len);
+
+                info!("tunnel data remain: {}", self.tun_input.len());
+
+                match ret {
+                    Ok(_) => Ok((data_len, token)),
+                    Err(e) => {
+                        self.remove(token);
+                        Err(e.into())
+                    }
+                }
+            }
+            None => {
+                //
+                // Client doesn't exist yet?! The caller will create it
+                // and will push the data
+                //
+                Ok((data_len, token))
+            }
+        }
+    }
+
+    pub fn packet_data_into(&mut self, buf: &mut [u8]) -> Result<()> {
+        if self.tun_input.len() < buf.len() {
+            return Err(Error::BufferTooSmall {
+                max: buf.len(),
+                actual: self.tun_input.len(),
+            });
+        }
+
+        buf.copy_from_slice(&self.tun_input[0..buf.len()]);
+        self.tun_input.advance(buf.len());
+        Ok(())
+    }
+
+    pub fn packet_data_write(&mut self, dst: Token, len: usize) -> Result<()> {
+        let client = match self.map.get_mut(&dst) {
             Some(v) => v,
             None => return Err(Error::ClientNotFound),
         };
 
-        let p = Packet::from_reader(&mut client.stream)?;
+        if self.tun_input.len() < len {
+            return Err(Error::BufferTooSmall {
+                max: len,
+                actual: self.tun_input.len(),
+            });
+        }
 
-        match p.msg {
-            PacketMessage::Data => {
-                let data_len = p.data_len as usize;
+        if let Err(e) = client.stream.write_all(&self.tun_input[0..len]) {
+            error!("write failure ({e})");
+            self.remove(dst);
+        }
+        self.tun_input.advance(len);
+        Ok(())
+    }
 
-                if let Err(e) = client.stream.read_exact(&mut buffer[0..data_len]) {
-                    self.remove(Token(p.addr as usize));
-                    return Err(e.into());
-                }
+    pub fn flush_read(&mut self, src: Token) -> Result<()> {
+        let client = match self.map.get_mut(&src) {
+            Some(v) => v,
+            None => return Err(Error::ClientNotFound),
+        };
 
-                Ok((data_len, Token(p.addr as usize)))
+        loop {
+            let read_len = match client.stream.read(&mut self.tun_buffer) {
+                Ok(v) => v,
+                Err(e) if e.kind() == ErrorKind::WouldBlock => break Ok(()),
+                Err(e) => return Err(e.into()),
+            };
+
+            if 0 == read_len {
+                break Err(Error::Eof);
             }
-            _ => {
-                self.remove(Token(p.addr as usize));
-                Err(Error::TunnelError { msg: p.msg })
-            }
+
+            self.tun_input.extend_from_slice(&self.tun_buffer[0..read_len]);
         }
     }
 

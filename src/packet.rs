@@ -19,7 +19,7 @@ use crate::error::{Error, Result};
 
 const PACKET_VERSION: u8 = 1;
 const SCRATCH_SIZE: usize = 8 * 1024;
-const HEADER_SIZE: usize = 14;
+pub const HEADER_SIZE: usize = 14;
 
 #[derive(Display, Debug, Clone, Copy, PartialEq)]
 #[repr(u8)]
@@ -67,7 +67,7 @@ impl From<Error> for PacketMessage {
 pub struct Packet {
     pub ver: u8,
     pub msg: PacketMessage,
-    pub addr: u64,
+    pub addr: u32,
     pub data_len: u32,
 }
 
@@ -82,7 +82,7 @@ impl Display for Packet {
 }
 
 impl Packet {
-    pub fn new(addr: u64, msg: PacketMessage, data_len: u32) -> Packet {
+    pub fn new(addr: u32, msg: PacketMessage, data_len: u32) -> Packet {
         Self {
             ver: PACKET_VERSION,
             msg,
@@ -91,7 +91,7 @@ impl Packet {
         }
     }
 
-    pub fn new_data(addr: u64, data_len: u32) -> Packet {
+    pub fn new_data(addr: u32, data_len: u32) -> Packet {
         Self {
             ver: PACKET_VERSION,
             msg: PacketMessage::Data,
@@ -100,7 +100,7 @@ impl Packet {
         }
     }
 
-    pub fn new_message(addr: u64, msg: PacketMessage) -> Packet {
+    pub fn new_message(addr: u32, msg: PacketMessage) -> Packet {
         Self {
             ver: PACKET_VERSION,
             msg,
@@ -114,7 +114,7 @@ impl Packet {
 
         cur.write_u8(self.ver)?;
         cur.write_u8(self.msg as u8)?;
-        cur.write_u64::<NetworkEndian>(self.addr)?;
+        cur.write_u32::<NetworkEndian>(self.addr)?;
         cur.write_u32::<NetworkEndian>(self.data_len)?;
 
         let used_size: usize = cur.position().try_into()?;
@@ -136,7 +136,7 @@ impl Packet {
 
         let msg: PacketMessage = cur.read_u8()?.try_into()?;
 
-        let addr = cur.read_u64::<NetworkEndian>()?;
+        let addr = cur.read_u32::<NetworkEndian>()?;
         let data_len = cur.read_u32::<NetworkEndian>()?;
 
         Ok(Packet::new(addr, msg, data_len))

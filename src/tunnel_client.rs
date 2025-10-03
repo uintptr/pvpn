@@ -6,7 +6,6 @@ use log::{error, info, warn};
 
 use crate::{
     error::Result,
-    packet::PacketMessage,
     streams::{ClientStream, TokenStreams},
 };
 
@@ -34,17 +33,18 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
             return Err(e.into());
         }
 
+        info!("streams: {}", streams.len());
+
         for event in events.iter() {
             if TUNNEL_STREAM == event.token() && event.is_readable() {
-                let (read_len, dst_token) = match streams.read_packet(TUNNEL_STREAM, &mut read_buffer) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        error!("Unable to read packet from {} ({e})", TUNNEL_STREAM.0);
-                        return Err(e.into());
-                    }
-                };
+                if let Err(e) = streams.flush_read(TUNNEL_STREAM) {
+                    error!("Unable to read packet from {} ({e})", TUNNEL_STREAM.0);
+                    return Err(e);
+                }
 
-                info!("{read_len} bytes for {:?}", dst_token);
+                let (read_len, dst_token) = streams.read_packet()?;
+
+                info!("{read_len} bytes for token={:?}", read_len);
 
                 if !streams.contains_token(&dst_token) {
                     //
@@ -64,29 +64,12 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
 
                     let mut client = ClientStream::new(sstream);
 
+                    streams.packet_data_into(&mut read_buffer[0..read_len])?;
                     client.push_data(&read_buffer[0..read_len]);
-
                     streams.add(dst_token, client);
-                } else {
-                    info!("{dst_token:?} is already connected to {server}");
-                    //
-                    // Send the data to the connected server
-                    //
-                    if let Err(e) = streams.write(dst_token, &read_buffer[0..read_len]) {
-                        error!("Unable to send {read_len} to {server} for {dst_token:?} ({e})");
-                        //
-                        // This is fatal to the tunel if we can't send the message back
-                        //
-
-                        if let Err(e) = streams.write_message(TUNNEL_STREAM, dst_token, PacketMessage::Disconnected) {
-                            error!("unable to write message for {} ({e})", dst_token.0);
-                            return Err(e.into());
-                        }
-                    }
                 }
             } else if TUNNEL_STREAM == event.token() && event.is_writable() {
                 info!("{TUNNEL_STREAM:?} is writiable");
-
                 if let Err(e) = streams.flush(TUNNEL_STREAM) {
                     error!("flush failure for {} {e}", TUNNEL_STREAM.0);
                     return Err(e.into());
