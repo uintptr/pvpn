@@ -98,6 +98,7 @@ fn tunnel_handler(mut tstream: TcpStream, server: &str) -> Result<()> {
 
                 token_id += 1;
             } else if TUNNEL_STREAM == event.token() && event.is_readable() {
+                // it's fatal if we the tunnel read fails
                 streams.flush_read(TUNNEL_STREAM.0)?;
 
                 match streams.read_packet(&mut read_buffer) {
