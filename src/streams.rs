@@ -216,10 +216,6 @@ impl TokenStreams {
 
         info!("READ:  {p}");
 
-        if let PacketMessage::Disconnected = p.msg {
-            info!("Hello, World");
-        }
-
         self.tun_input.advance(HEADER_SIZE);
 
         match p.msg {
