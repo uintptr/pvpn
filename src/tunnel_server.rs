@@ -1,4 +1,4 @@
-use log::{error, info, warn};
+use log::{error, info};
 use mio::{
     Events, Interest, Poll, Token,
     net::{TcpListener, TcpStream},
@@ -7,6 +7,7 @@ use std::io::ErrorKind;
 
 use crate::{
     error::{Error, Result},
+    packet::PacketMessage,
     streams::{ClientStream, TokenStreams},
 };
 
@@ -99,7 +100,9 @@ fn tunnel_handler(mut tstream: TcpStream, server: &str) -> Result<()> {
             } else if TUNNEL_STREAM == event.token() && event.is_readable() {
                 streams.flush_read(TUNNEL_STREAM.0)?;
 
-                let (_read_len, _dst_token) = streams.read_packet()?;
+                if let Err(e) = streams.read_packet() {
+                    error!("{e}")
+                }
             } else if TUNNEL_STREAM == event.token() && event.is_writable() {
                 info!("{} is writable", TUNNEL_STREAM.0);
                 if let Err(e) = streams.flush(TUNNEL_STREAM.0) {
@@ -108,21 +111,16 @@ fn tunnel_handler(mut tstream: TcpStream, server: &str) -> Result<()> {
                 }
             } else {
                 if event.is_readable() {
-                    let read_len = match streams.read(event.token().0, &mut read_buffer) {
-                        Ok(v) => v,
-                        Err(Error::Eof) => {
-                            warn!("Connection terminated");
-                            continue;
+                    match streams.read(event.token().0, &mut read_buffer) {
+                        Ok(v) => {
+                            info!("read {v} bytes from internet {:?}", event.token());
+                            streams.write_packet(TUNNEL_STREAM.0, event.token().0, &read_buffer[0..v])?;
                         }
                         Err(e) => {
-                            error!("read error: {e}");
-                            continue;
+                            info!("{e}");
+                            streams.write_message(TUNNEL_STREAM.0, event.token().0, PacketMessage::Disconnected)?
                         }
-                    };
-
-                    info!("read {read_len} bytes from internet {:?}", event.token());
-
-                    streams.write_packet(TUNNEL_STREAM.0, event.token().0, &read_buffer[0..read_len])?;
+                    }
                 } else if event.is_writable() {
                     //
                     // writable... feels like we should use this

@@ -11,6 +11,7 @@ pub enum Error {
     ReadFailure,
     Eof,
     ConnectionNotFound,
+    ConnectionRefused,
     ClientNotFound,
     TunnelError {
         msg: PacketMessage,
@@ -30,6 +31,7 @@ pub enum Error {
     InvalidMessageType {
         msg: u8,
     },
+    IoError,
     //
     // 2d party
     //

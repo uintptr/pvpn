@@ -51,6 +51,15 @@ impl TryFrom<u8> for PacketMessage {
     }
 }
 
+impl From<&PacketMessage> for Error {
+    fn from(value: &PacketMessage) -> Error {
+        match value {
+            PacketMessage::ConnectionRefused => Error::ConnectionRefused,
+            _ => Error::IoError,
+        }
+    }
+}
+
 impl From<Error> for PacketMessage {
     fn from(value: Error) -> Self {
         match value {

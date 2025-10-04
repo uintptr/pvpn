@@ -211,23 +211,34 @@ impl TokenStreams {
 
         match self.map.get_mut(&p.addr) {
             Some(v) => {
-                //
-                // Client exists, just send the data to its stream
-                //
-                let ret = v.stream.write_all(&self.tun_input[0..data_len]);
+                match p.msg {
+                    PacketMessage::Data => {
+                        //
+                        // Client exists, just send the data to its stream
+                        //
+                        let ret = v.stream.write_all(&self.tun_input[0..data_len]);
+                        //
+                        // regardless if this worked or not we consume the data
+                        //
+                        self.tun_input.advance(data_len);
 
-                //
-                // regardless if this worked or not we consume the data
-                //
-                self.tun_input.advance(data_len);
+                        info!("tunnel data remain: {}", self.tun_input.len());
 
-                info!("tunnel data remain: {}", self.tun_input.len());
-
-                match ret {
-                    Ok(_) => Ok((data_len, p.addr)),
-                    Err(e) => {
+                        match ret {
+                            Ok(_) => Ok((data_len, p.addr)),
+                            Err(e) => {
+                                self.remove(p.addr);
+                                Err(e.into())
+                            }
+                        }
+                    }
+                    _ => {
+                        //
+                        // stream error
+                        //
+                        let err: Error = (&p.msg).into();
                         self.remove(p.addr);
-                        Err(e.into())
+                        Err(err)
                     }
                 }
             }
