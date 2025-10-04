@@ -111,10 +111,14 @@ fn tunnel_handler(mut tstream: TcpStream, server: &str) -> Result<()> {
                                     return Err(e.into());
                                 }
                             }
-
-                            if 0 == read_len {
-                                break;
-                            }
+                        }
+                        Err(Error::Empty) => {
+                            // not a failure case
+                            break;
+                        }
+                        Err(Error::NotEnoughData) => {
+                            // not a failure case
+                            break;
                         }
                         Err(e) => {
                             warn!("{e}");

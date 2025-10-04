@@ -195,7 +195,7 @@ impl TokenStreams {
     pub fn read_packet(&mut self, buf: &mut [u8]) -> Result<(usize, Address)> {
         if self.tun_input.len() < HEADER_SIZE {
             // nothing to read
-            return Ok((0, 0));
+            return Err(Error::Empty);
         }
 
         let p = Packet::from_buffer(&self.tun_input)?;
@@ -211,7 +211,7 @@ impl TokenStreams {
             // Not enough data
             //
             warn!("not enough data {} < {total_length}", self.tun_input.len());
-            return Ok((0, p.addr));
+            return Err(Error::NotEnoughData);
         }
 
         info!("READ:  {p}");

@@ -10,6 +10,8 @@ use crate::packet::PacketMessage;
 pub enum Error {
     ReadFailure,
     Eof,
+    Empty,
+    NotEnoughData,
     ConnectionNotFound,
     ConnectionRefused,
     ClientNotFound,
