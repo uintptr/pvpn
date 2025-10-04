@@ -29,11 +29,11 @@ impl ClientStream {
         }
     }
 
-    fn flush_pre(&mut self) -> Result<()> {
+    fn flush_buffer(&mut self) -> Result<usize> {
         info!("flush({})", self.out_bytes.len());
 
         if self.out_bytes.is_empty() {
-            return Ok(());
+            return Ok(0);
         }
 
         let written_len = match self.stream.write(&self.out_bytes) {
@@ -52,19 +52,19 @@ impl ClientStream {
 
         info!("flushed {} / {}", written_len, self.out_bytes.len());
 
-        self.out_bytes.clear();
+        self.out_bytes.advance(written_len);
 
-        Ok(())
+        Ok(written_len)
     }
 
     pub fn push_data(&mut self, data: &[u8]) {
         self.out_bytes.extend_from_slice(data)
     }
 
-    pub fn complete_connect(&mut self) -> Result<()> {
+    pub fn complete_connect(&mut self) -> Result<usize> {
         if self.is_connected {
             // nothing to do
-            return Ok(());
+            return Ok(0);
         }
 
         //
@@ -82,12 +82,12 @@ impl ClientStream {
             // * libc::EINPROGRESS
             // * ErrorKind::NotConnected
             warn!("{e}");
-            return Ok(());
+            return Ok(0);
         }
 
         self.is_connected = true;
 
-        self.flush_pre()
+        self.flush_buffer()
     }
 }
 
@@ -171,7 +171,7 @@ impl TokenStreams {
         Ok(())
     }
 
-    pub fn write_packet(&mut self, src: Address, dst: Address, data: &[u8]) -> Result<()> {
+    pub fn write_packet(&mut self, src: Address, dst: Address, data: &[u8]) -> Result<usize> {
         let client = match self.map.get_mut(&src) {
             Some(v) => v,
             None => return Err(Error::ClientNotFound),
@@ -183,13 +183,42 @@ impl TokenStreams {
 
         info!("WRITE: {p}");
 
-        let mut buf: [u8; HEADER_SIZE] = [0; HEADER_SIZE];
-        p.encode(&mut buf)?;
+        let mut hdr: [u8; HEADER_SIZE] = [0; HEADER_SIZE];
+        p.encode(&mut hdr)?;
 
-        client.stream.write_all(&buf)?;
-        client.stream.write_all(data)?;
+        // flush whatever we could send before
+        let mut total_len = client.flush_buffer()?;
+
+        let write_len = match client.stream.write(&hdr) {
+            Ok(v) => v,
+            Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                client.push_data(&hdr);
+                client.push_data(data);
+                0
+            }
+            Err(e) => return Err(e.into()),
+        };
+
+        total_len += write_len;
+
+        if write_len == hdr.len() {
+            let write_len = match client.stream.write(&hdr) {
+                Ok(v) => v,
+                Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                    client.push_data(data);
+                    0
+                }
+                Err(e) => return Err(e.into()),
+            };
+
+            total_len += write_len;
+        } else {
+            client.push_data(data);
+        }
+
         client.stream.flush()?;
-        Ok(())
+
+        Ok(total_len)
     }
 
     pub fn read_packet(&mut self, buf: &mut [u8]) -> Result<(usize, Address)> {
