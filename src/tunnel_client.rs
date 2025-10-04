@@ -33,20 +33,30 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
             return Err(e.into());
         }
 
-        info!("streams: {}", streams.len());
-
         for event in events.iter() {
             if TUNNEL_STREAM == event.token() && event.is_readable() {
-                if let Err(e) = streams.flush_read(TUNNEL_STREAM.0) {
-                    error!("Unable to read packet from {} ({e})", TUNNEL_STREAM.0);
-                    return Err(e);
-                }
+                streams.flush_read(TUNNEL_STREAM.0)?;
 
-                let (read_len, dst_addr) = streams.read_packet()?;
+                let (read_len, dst_addr) = match streams.read_packet(&mut read_buffer) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        error!("{e}");
+                        continue;
+                    }
+                };
 
-                info!("{read_len} bytes for token={:?}", read_len);
+                info!("{read_len} bytes for addr={dst_addr}");
 
-                if !streams.contains_token(dst_addr) {
+                if streams.contains_token(dst_addr) {
+                    if let Err(e) = streams.write(dst_addr, &mut read_buffer[0..read_len]) {
+                        warn!("Connection terminated ({e})");
+                        let msg = e.into();
+                        if let Err(e) = streams.write_message(TUNNEL_STREAM.0, event.token().0, msg) {
+                            error!("unable to write message for {} ({e})", event.token().0);
+                            return Err(e.into());
+                        }
+                    }
+                } else {
                     //
                     // Connect the server
                     //
@@ -78,7 +88,6 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
                         Err(e) => {
                             warn!("Connection terminated ({e})");
                             let msg = e.into();
-
                             if let Err(e) = streams.write_message(TUNNEL_STREAM.0, event.token().0, msg) {
                                 error!("unable to write message for {} ({e})", event.token().0);
                                 return Err(e.into());

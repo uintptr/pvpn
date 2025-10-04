@@ -1,4 +1,4 @@
-use log::{error, info};
+use log::{error, info, warn};
 use mio::{
     Events, Interest, Poll, Token,
     net::{TcpListener, TcpStream},
@@ -100,8 +100,21 @@ fn tunnel_handler(mut tstream: TcpStream, server: &str) -> Result<()> {
             } else if TUNNEL_STREAM == event.token() && event.is_readable() {
                 streams.flush_read(TUNNEL_STREAM.0)?;
 
-                if let Err(e) = streams.read_packet() {
-                    error!("{e}")
+                match streams.read_packet(&mut read_buffer) {
+                    Ok((read_len, dst_addr)) => {
+                        if let Err(e) = streams.write(dst_addr, &mut read_buffer[0..read_len]) {
+                            warn!("Connection terminated ({e})");
+                            let msg = e.into();
+                            if let Err(e) = streams.write_message(TUNNEL_STREAM.0, event.token().0, msg) {
+                                error!("unable to write message for {} ({e})", event.token().0);
+                                return Err(e.into());
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("{e}");
+                        continue;
+                    }
                 }
             } else if TUNNEL_STREAM == event.token() && event.is_writable() {
                 info!("{} is writable", TUNNEL_STREAM.0);

@@ -183,7 +183,7 @@ impl TokenStreams {
         Ok(())
     }
 
-    pub fn read_packet(&mut self) -> Result<(usize, Address)> {
+    pub fn read_packet(&mut self, buf: &mut [u8]) -> Result<(usize, Address)> {
         if self.tun_input.len() < HEADER_SIZE {
             // nothing to read
             return Ok((0, 0));
@@ -204,50 +204,31 @@ impl TokenStreams {
             return Ok((0, p.addr));
         }
 
-        //
-        // "consume" the header
-        //
         self.tun_input.advance(HEADER_SIZE);
 
-        match self.map.get_mut(&p.addr) {
-            Some(v) => {
-                match p.msg {
-                    PacketMessage::Data => {
-                        //
-                        // Client exists, just send the data to its stream
-                        //
-                        let ret = v.stream.write_all(&self.tun_input[0..data_len]);
-                        //
-                        // regardless if this worked or not we consume the data
-                        //
-                        self.tun_input.advance(data_len);
-
-                        info!("tunnel data remain: {}", self.tun_input.len());
-
-                        match ret {
-                            Ok(_) => Ok((data_len, p.addr)),
-                            Err(e) => {
-                                self.remove(p.addr);
-                                Err(e.into())
-                            }
-                        }
-                    }
-                    _ => {
-                        //
-                        // stream error
-                        //
-                        let err: Error = (&p.msg).into();
-                        self.remove(p.addr);
-                        Err(err)
-                    }
+        match p.msg {
+            PacketMessage::Data => {
+                if data_len > buf.len() {
+                    return Err(Error::BufferTooSmall {
+                        max: buf.len(),
+                        actual: data_len,
+                    });
                 }
-            }
-            None => {
-                //
-                // Client doesn't exist yet?! The caller will create it
-                // and will push the data
-                //
+
+                if data_len > 0 {
+                    buf.copy_from_slice(&self.tun_input[0..data_len]);
+                }
+
+                self.tun_input.advance(data_len);
+
                 Ok((data_len, p.addr))
+            }
+            _ => {
+                let e: Error = (&p.msg).into();
+                error!("{e}");
+                self.remove(p.addr);
+
+                Err(e)
             }
         }
     }
