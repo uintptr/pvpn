@@ -161,6 +161,9 @@ impl TokenStreams {
         };
 
         let p = Packet::new_message(dst, msg);
+
+        info!("WRITE: {p}");
+
         let mut buf: [u8; HEADER_SIZE] = [0; HEADER_SIZE];
         p.encode(&mut buf)?;
         client.stream.write_all(&buf)?;
@@ -213,6 +216,10 @@ impl TokenStreams {
 
         info!("READ:  {p}");
 
+        if let PacketMessage::Disconnected = p.msg {
+            info!("Hello, World");
+        }
+
         self.tun_input.advance(HEADER_SIZE);
 
         match p.msg {
@@ -232,7 +239,10 @@ impl TokenStreams {
 
                 Ok((data_len, p.addr))
             }
-            PacketMessage::Disconnected => Err(Error::Eof),
+            PacketMessage::Disconnected => {
+                info!("disconnected?");
+                Err(Error::Eof)
+            }
             _ => {
                 let e: Error = (&p.msg).into();
                 error!("{e}");
