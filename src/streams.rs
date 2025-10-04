@@ -216,7 +216,7 @@ impl TokenStreams {
                 }
 
                 if data_len > 0 {
-                    buf.copy_from_slice(&self.tun_input[0..data_len]);
+                    buf[0..data_len].copy_from_slice(&self.tun_input[0..data_len]);
                 }
 
                 self.tun_input.advance(data_len);
@@ -227,7 +227,6 @@ impl TokenStreams {
                 let e: Error = (&p.msg).into();
                 error!("{e}");
                 self.remove(p.addr);
-
                 Err(e)
             }
         }
