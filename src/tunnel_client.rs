@@ -46,7 +46,6 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
                 };
 
                 info!("{read_len} bytes for addr={dst_addr}");
-                info!("len: {}", read_buffer.len());
 
                 if streams.contains_token(dst_addr) {
                     if let Err(e) = streams.write(dst_addr, &mut read_buffer[0..read_len]) {

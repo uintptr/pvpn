@@ -50,7 +50,7 @@ impl ClientStream {
             }
         };
 
-        info!("wrote {} / {}", written_len, self.out_bytes.len());
+        info!("flushed {} / {}", written_len, self.out_bytes.len());
 
         self.out_bytes.clear();
 
@@ -177,6 +177,8 @@ impl TokenStreams {
 
         let p = Packet::new_data(dst, data_len);
 
+        info!("WRITE: {p}");
+
         p.write(&mut client.stream)?;
         client.stream.write_all(data)?;
         client.stream.flush()?;
@@ -191,6 +193,8 @@ impl TokenStreams {
 
         let p = Packet::from_buffer(&self.tun_input)?;
 
+        info!("READ:  {p}");
+
         //
         // Do we also have the data available
         //
@@ -201,6 +205,7 @@ impl TokenStreams {
             //
             // Not enough data
             //
+            warn!("not enough data {} < {total_length}", self.tun_input.len());
             return Ok((0, p.addr));
         }
 
@@ -223,6 +228,7 @@ impl TokenStreams {
 
                 Ok((data_len, p.addr))
             }
+            PacketMessage::Disconnected => Err(Error::Eof),
             _ => {
                 let e: Error = (&p.msg).into();
                 error!("{e}");

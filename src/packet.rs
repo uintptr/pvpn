@@ -172,8 +172,6 @@ impl Packet {
     {
         let mut hdr: [u8; HEADER_SIZE] = [0; HEADER_SIZE];
 
-        info!("=> {}", self);
-
         self.encode(&mut hdr)?;
         writer.write_all(&hdr)?;
         Ok(())
