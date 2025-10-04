@@ -6,10 +6,11 @@ use std::{
     io::{Cursor, ErrorKind, Read, Seek, SeekFrom, Write},
     mem,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    ops::Add,
     ptr::hash,
 };
 
-use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
+use byteorder::{LittleEndian, NetworkEndian, ReadBytesExt, WriteBytesExt};
 use bytes::buf;
 use derive_more::Display;
 use log::{error, info};
@@ -63,11 +64,13 @@ impl From<Error> for PacketMessage {
     }
 }
 
+pub type Address = usize;
+
 #[derive(Debug, PartialEq)]
 pub struct Packet {
     pub ver: u8,
     pub msg: PacketMessage,
-    pub addr: u32,
+    pub addr: Address,
     pub data_len: u32,
 }
 
@@ -82,7 +85,7 @@ impl Display for Packet {
 }
 
 impl Packet {
-    pub fn new(addr: u32, msg: PacketMessage, data_len: u32) -> Packet {
+    pub fn new(addr: Address, msg: PacketMessage, data_len: u32) -> Packet {
         Self {
             ver: PACKET_VERSION,
             msg,
@@ -91,7 +94,7 @@ impl Packet {
         }
     }
 
-    pub fn new_data(addr: u32, data_len: u32) -> Packet {
+    pub fn new_data(addr: Address, data_len: u32) -> Packet {
         Self {
             ver: PACKET_VERSION,
             msg: PacketMessage::Data,
@@ -100,7 +103,7 @@ impl Packet {
         }
     }
 
-    pub fn new_message(addr: u32, msg: PacketMessage) -> Packet {
+    pub fn new_message(addr: Address, msg: PacketMessage) -> Packet {
         Self {
             ver: PACKET_VERSION,
             msg,
@@ -114,8 +117,11 @@ impl Packet {
 
         cur.write_u8(self.ver)?;
         cur.write_u8(self.msg as u8)?;
-        cur.write_u32::<NetworkEndian>(self.addr)?;
-        cur.write_u32::<NetworkEndian>(self.data_len)?;
+
+        let addr_32: u32 = self.addr.try_into()?;
+
+        cur.write_u32::<LittleEndian>(addr_32)?;
+        cur.write_u32::<LittleEndian>(self.data_len)?;
 
         let used_size: usize = cur.position().try_into()?;
 
@@ -136,10 +142,10 @@ impl Packet {
 
         let msg: PacketMessage = cur.read_u8()?.try_into()?;
 
-        let addr = cur.read_u32::<NetworkEndian>()?;
-        let data_len = cur.read_u32::<NetworkEndian>()?;
+        let addr: Address = cur.read_u32::<LittleEndian>()?.try_into()?;
+        let data_len = cur.read_u32::<LittleEndian>()?;
 
-        Ok(Packet::new(addr, msg, data_len))
+        Ok(Packet::new(addr as Address, msg, data_len))
     }
 
     pub fn from_reader<R>(reader: &mut R) -> Result<Packet>

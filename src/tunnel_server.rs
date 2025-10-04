@@ -67,8 +67,8 @@ fn tunnel_handler(server: &str, tunnel: &str) -> Result<()> {
                 }
 
                 let client = ClientStream::new(tstream);
-                streams.add(TUNNEL_STREAM, client);
-                streams.remove(TUNNEL_PORT);
+                streams.add(TUNNEL_STREAM.0, client);
+                streams.remove(TUNNEL_PORT.0);
                 poll.registry().deregister(&mut tunnel_listener)?;
             } else if INTERNET_PORT == event.token() {
                 //
@@ -83,7 +83,7 @@ fn tunnel_handler(server: &str, tunnel: &str) -> Result<()> {
                     .register(&mut istream, token.clone(), Interest::READABLE | Interest::WRITABLE)?;
 
                 let iclient = ClientStream::new(istream);
-                streams.add(token, iclient);
+                streams.add(token.0, iclient);
 
                 token_id += 1;
             } else if TUNNEL_STREAM == event.token() && event.is_readable() {
@@ -103,13 +103,13 @@ fn tunnel_handler(server: &str, tunnel: &str) -> Result<()> {
                 }
             } else if TUNNEL_STREAM == event.token() && event.is_readable() {
                 info!("{} is writable", TUNNEL_STREAM.0);
-                if let Err(e) = streams.flush(TUNNEL_STREAM) {
+                if let Err(e) = streams.flush(TUNNEL_STREAM.0) {
                     error!("flush failure for {} {e}", TUNNEL_STREAM.0);
                     return Err(e.into());
                 }
             } else {
                 if event.is_readable() {
-                    let read_len = match streams.read(event.token(), &mut read_buffer) {
+                    let read_len = match streams.read(event.token().0, &mut read_buffer) {
                         Ok(v) => v,
                         Err(Error::Eof) => {
                             warn!("Connection terminated");
@@ -123,12 +123,12 @@ fn tunnel_handler(server: &str, tunnel: &str) -> Result<()> {
 
                     info!("read {read_len} bytes from internet {:?}", event.token());
 
-                    streams.write_packet(TUNNEL_STREAM, event.token(), &read_buffer[0..read_len])?;
+                    streams.write_packet(TUNNEL_STREAM.0, event.token().0, &read_buffer[0..read_len])?;
                 } else if event.is_writable() {
                     //
                     // writable... feels like we should use this
                     //
-                    if let Err(e) = streams.flush(event.token()) {
+                    if let Err(e) = streams.flush(event.token().0) {
                         error!("flush({}) => {e}", event.token().0)
                     }
                 }

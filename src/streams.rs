@@ -5,16 +5,17 @@ use std::{
 
 use bytes::{Buf, BytesMut};
 use log::{error, info, warn};
-use mio::{Token, net::TcpStream};
+use mio::net::TcpStream;
 
 use crate::{
     error::{Error, Result},
-    packet::{HEADER_SIZE, Packet, PacketMessage},
+    packet::{Address, HEADER_SIZE, Packet, PacketMessage},
 };
 
 const CLIENT_BUFFER_SIZE: usize = 8 * 1024;
 
 pub struct ClientStream {
+    addr: Address,
     stream: TcpStream,
     out_bytes: BytesMut,
     pub is_connected: bool,
@@ -23,6 +24,7 @@ pub struct ClientStream {
 impl ClientStream {
     pub fn new(stream: TcpStream) -> Self {
         Self {
+            addr: 0,
             stream,
             out_bytes: BytesMut::new(),
             is_connected: false,
@@ -92,7 +94,7 @@ impl ClientStream {
 }
 
 pub struct TokenStreams {
-    map: HashMap<Token, ClientStream>,
+    map: HashMap<Address, ClientStream>,
     tun_buffer: [u8; CLIENT_BUFFER_SIZE],
     tun_input: BytesMut,
 }
@@ -112,21 +114,21 @@ impl TokenStreams {
         self.map.len()
     }
 
-    pub fn add(&mut self, token: Token, client: ClientStream) {
-        self.map.insert(token, client);
+    pub fn add(&mut self, addr: Address, client: ClientStream) {
+        self.map.insert(addr, client);
     }
 
-    pub fn remove(&mut self, token: Token) {
-        info!("removing token={}", token.0);
-        self.map.remove(&token);
+    pub fn remove(&mut self, addr: Address) {
+        info!("removing token={addr}");
+        self.map.remove(&addr);
     }
 
-    pub fn contains_token(&self, token: &Token) -> bool {
-        self.map.contains_key(token)
+    pub fn contains_token(&self, addr: Address) -> bool {
+        self.map.contains_key(&addr)
     }
 
-    pub fn flush(&mut self, token: Token) -> Result<()> {
-        let client = match self.map.get_mut(&token) {
+    pub fn flush(&mut self, addr: Address) -> Result<()> {
+        let client = match self.map.get_mut(&addr) {
             Some(v) => v,
             None => return Err(Error::ClientNotFound),
         };
@@ -142,8 +144,8 @@ impl TokenStreams {
         Ok(())
     }
 
-    pub fn write(&mut self, token: Token, buffer: &[u8]) -> Result<()> {
-        let client = match self.map.get_mut(&token) {
+    pub fn write(&mut self, addr: Address, buffer: &[u8]) -> Result<()> {
+        let client = match self.map.get_mut(&addr) {
             Some(v) => v,
             None => return Err(Error::ClientNotFound),
         };
@@ -154,24 +156,20 @@ impl TokenStreams {
         Ok(())
     }
 
-    pub fn write_message(&mut self, src: Token, dst: Token, msg: PacketMessage) -> Result<()> {
+    pub fn write_message(&mut self, src: Address, dst: Address, msg: PacketMessage) -> Result<()> {
         let client = match self.map.get_mut(&src) {
             Some(v) => v,
             None => return Err(Error::ClientNotFound),
         };
 
-        let addr: u32 = dst.0.try_into()?;
-
-        let p = Packet::new_message(addr, msg);
+        let p = Packet::new_message(dst, msg);
 
         p.write(&mut client.stream)?;
         client.stream.flush()?;
         Ok(())
     }
 
-    pub fn write_packet(&mut self, src: Token, dst: Token, data: &[u8]) -> Result<()> {
-        let dst_addr: u32 = dst.0.try_into()?;
-
+    pub fn write_packet(&mut self, src: Address, dst: Address, data: &[u8]) -> Result<()> {
         let client = match self.map.get_mut(&src) {
             Some(v) => v,
             None => return Err(Error::ClientNotFound),
@@ -179,7 +177,7 @@ impl TokenStreams {
 
         let data_len: u32 = data.len().try_into()?;
 
-        let p = Packet::new_data(dst_addr, data_len);
+        let p = Packet::new_data(dst, data_len);
 
         p.write(&mut client.stream)?;
         client.stream.write_all(data)?;
@@ -187,15 +185,13 @@ impl TokenStreams {
         Ok(())
     }
 
-    pub fn read_packet(&mut self) -> Result<(usize, Token)> {
+    pub fn read_packet(&mut self) -> Result<(usize, Address)> {
         if self.tun_input.len() < HEADER_SIZE {
             // nothing to read
-            return Ok((0, Token(0)));
+            return Ok((0, 0));
         }
 
         let p = Packet::from_buffer(&self.tun_input)?;
-
-        let token = Token(p.addr as usize);
 
         //
         // Do we also have the data available
@@ -207,7 +203,7 @@ impl TokenStreams {
             //
             // Not enough data
             //
-            return Ok((0, token));
+            return Ok((0, p.addr));
         }
 
         //
@@ -215,7 +211,7 @@ impl TokenStreams {
         //
         self.tun_input.advance(HEADER_SIZE);
 
-        match self.map.get_mut(&token) {
+        match self.map.get_mut(&p.addr) {
             Some(v) => {
                 //
                 // Client exists, just send the data to its stream
@@ -230,9 +226,9 @@ impl TokenStreams {
                 info!("tunnel data remain: {}", self.tun_input.len());
 
                 match ret {
-                    Ok(_) => Ok((data_len, token)),
+                    Ok(_) => Ok((data_len, p.addr)),
                     Err(e) => {
-                        self.remove(token);
+                        self.remove(p.addr);
                         Err(e.into())
                     }
                 }
@@ -242,7 +238,7 @@ impl TokenStreams {
                 // Client doesn't exist yet?! The caller will create it
                 // and will push the data
                 //
-                Ok((data_len, token))
+                Ok((data_len, p.addr))
             }
         }
     }
@@ -260,7 +256,7 @@ impl TokenStreams {
         Ok(())
     }
 
-    pub fn packet_data_write(&mut self, dst: Token, len: usize) -> Result<()> {
+    pub fn packet_data_write(&mut self, dst: Address, len: usize) -> Result<()> {
         let client = match self.map.get_mut(&dst) {
             Some(v) => v,
             None => return Err(Error::ClientNotFound),
@@ -281,7 +277,7 @@ impl TokenStreams {
         Ok(())
     }
 
-    pub fn flush_read(&mut self, src: Token) -> Result<()> {
+    pub fn flush_read(&mut self, src: Address) -> Result<()> {
         let client = match self.map.get_mut(&src) {
             Some(v) => v,
             None => return Err(Error::ClientNotFound),
@@ -302,8 +298,8 @@ impl TokenStreams {
         }
     }
 
-    pub fn read(&mut self, token: Token, buffer: &mut [u8]) -> Result<usize> {
-        let client = match self.map.get_mut(&token) {
+    pub fn read(&mut self, addr: Address, buffer: &mut [u8]) -> Result<usize> {
+        let client = match self.map.get_mut(&addr) {
             Some(v) => v,
             None => return Err(Error::ClientNotFound),
         };
@@ -312,15 +308,15 @@ impl TokenStreams {
             Ok(v) => v,
             Err(e) => {
                 error!("read failure ({e})");
-                self.remove(token);
+                self.remove(addr);
                 return Err(e.into());
             }
         };
 
         // EOF
         if 0 == read_len {
-            warn!("received EOF for token={}", token.0);
-            self.remove(token);
+            warn!("received EOF for token={addr}");
+            self.remove(addr);
             return Err(Error::Eof);
         }
 
