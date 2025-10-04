@@ -193,8 +193,6 @@ impl TokenStreams {
 
         let p = Packet::from_buffer(&self.tun_input)?;
 
-        info!("READ:  {p}");
-
         //
         // Do we also have the data available
         //
@@ -208,6 +206,8 @@ impl TokenStreams {
             warn!("not enough data {} < {total_length}", self.tun_input.len());
             return Ok((0, p.addr));
         }
+
+        info!("READ:  {p}");
 
         self.tun_input.advance(HEADER_SIZE);
 

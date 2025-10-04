@@ -79,8 +79,6 @@ fn tunnel_handler(mut tstream: TcpStream, server: &str) -> Result<()> {
         poll.poll(&mut events, None)?;
 
         for event in events.iter() {
-            info!("client: {}", event.token().0);
-
             if INTERNET_PORT == event.token() {
                 //
                 //
