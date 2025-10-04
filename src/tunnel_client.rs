@@ -5,7 +5,7 @@ use mio::{Events, Interest, Poll, Token, net::TcpStream};
 use log::{error, info, warn};
 
 use crate::{
-    error::Result,
+    error::{Error, Result},
     streams::{ClientStream, TokenStreams},
 };
 
@@ -37,42 +37,53 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
             if TUNNEL_STREAM == event.token() && event.is_readable() {
                 streams.flush_read(TUNNEL_STREAM.0)?;
 
-                let (read_len, dst_addr) = match streams.read_packet(&mut read_buffer) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        error!("{e}");
-                        continue;
-                    }
-                };
-
-                info!("{read_len} bytes for addr={dst_addr}");
-
-                if streams.contains_token(dst_addr) {
-                    if let Err(e) = streams.write(dst_addr, &mut read_buffer[0..read_len]) {
-                        warn!("Connection terminated ({e})");
-                        let msg = e.into();
-                        if let Err(e) = streams.write_message(TUNNEL_STREAM.0, event.token().0, msg) {
-                            error!("unable to write message for {} ({e})", event.token().0);
-                            return Err(e.into());
+                loop {
+                    let (read_len, dst_addr) = match streams.read_packet(&mut read_buffer) {
+                        Ok(v) => v,
+                        Err(Error::Empty) => {
+                            break;
                         }
+                        Err(Error::NotEnoughData) => {
+                            break;
+                        }
+                        Err(e) => {
+                            error!("{e}");
+                            break;
+                        }
+                    };
+
+                    info!("{read_len} bytes for addr={dst_addr}");
+
+                    if streams.contains_token(dst_addr) {
+                        if let Err(e) = streams.write(dst_addr, &mut read_buffer[0..read_len]) {
+                            warn!("Connection terminated ({e})");
+                            let msg = e.into();
+                            if let Err(e) = streams.write_message(TUNNEL_STREAM.0, event.token().0, msg) {
+                                error!("unable to write message for {} ({e})", event.token().0);
+                                return Err(e.into());
+                            }
+                        }
+                    } else {
+                        //
+                        // Connect the server
+                        //
+                        info!("{dst_addr} is not connected to {server}");
+
+                        let addr = server.parse()?;
+
+                        let mut sstream = TcpStream::connect(addr)?;
+
+                        poll.registry().register(
+                            &mut sstream,
+                            Token(dst_addr),
+                            Interest::READABLE | Interest::WRITABLE,
+                        )?;
+
+                        let mut client = ClientStream::new(sstream);
+
+                        client.push_data(&read_buffer[0..read_len]);
+                        streams.add(dst_addr, client);
                     }
-                } else {
-                    //
-                    // Connect the server
-                    //
-                    info!("{dst_addr} is not connected to {server}");
-
-                    let addr = server.parse()?;
-
-                    let mut sstream = TcpStream::connect(addr)?;
-
-                    poll.registry()
-                        .register(&mut sstream, Token(dst_addr), Interest::READABLE | Interest::WRITABLE)?;
-
-                    let mut client = ClientStream::new(sstream);
-
-                    client.push_data(&read_buffer[0..read_len]);
-                    streams.add(dst_addr, client);
                 }
             } else if TUNNEL_STREAM == event.token() && event.is_writable() {
                 info!("{TUNNEL_STREAM:?} is writiable");
@@ -98,15 +109,15 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
 
                         info!("{read_len} from {:?}", event.token());
 
+                        if 0 == read_len {
+                            break;
+                        }
+
                         if let Err(e) =
                             streams.write_packet(TUNNEL_STREAM.0, event.token().0, &read_buffer[0..read_len])
                         {
                             error!("unable to write packet for {} ({e})", event.token().0);
                             return Err(e.into());
-                        }
-
-                        if 0 == read_len {
-                            break;
                         }
                     }
                 } else if event.is_writable() {
