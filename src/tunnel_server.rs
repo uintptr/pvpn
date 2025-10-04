@@ -97,22 +97,29 @@ fn tunnel_handler(mut tstream: TcpStream, server: &str) -> Result<()> {
                 token_id += 1;
             } else if TUNNEL_STREAM == event.token() && event.is_readable() {
                 // it's fatal if we the tunnel read fails
-                streams.flush_read(TUNNEL_STREAM.0)?;
 
-                match streams.read_packet(&mut read_buffer) {
-                    Ok((read_len, dst_addr)) => {
-                        if let Err(e) = streams.write(dst_addr, &mut read_buffer[0..read_len]) {
-                            warn!("Connection terminated ({e})");
-                            let msg = e.into();
-                            if let Err(e) = streams.write_message(TUNNEL_STREAM.0, event.token().0, msg) {
-                                error!("unable to write message for {} ({e})", event.token().0);
-                                return Err(e.into());
+                loop {
+                    streams.flush_read(TUNNEL_STREAM.0)?;
+
+                    match streams.read_packet(&mut read_buffer) {
+                        Ok((read_len, dst_addr)) => {
+                            if let Err(e) = streams.write(dst_addr, &mut read_buffer[0..read_len]) {
+                                warn!("Connection terminated ({e})");
+                                let msg = e.into();
+                                if let Err(e) = streams.write_message(TUNNEL_STREAM.0, event.token().0, msg) {
+                                    error!("unable to write message for {} ({e})", event.token().0);
+                                    return Err(e.into());
+                                }
+                            }
+
+                            if 0 == read_len {
+                                break;
                             }
                         }
-                    }
-                    Err(e) => {
-                        warn!("{e}");
-                        continue;
+                        Err(e) => {
+                            warn!("{e}");
+                            break;
+                        }
                     }
                 }
             } else if TUNNEL_STREAM == event.token() && event.is_writable() {
