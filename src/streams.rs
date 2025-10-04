@@ -235,10 +235,7 @@ impl TokenStreams {
 
                 Ok((data_len, p.addr))
             }
-            PacketMessage::Disconnected => {
-                info!("disconnected?");
-                Err(Error::Eof)
-            }
+            PacketMessage::Disconnected => Err(Error::Eof),
             _ => {
                 let e: Error = (&p.msg).into();
                 error!("{e}");
@@ -246,40 +243,6 @@ impl TokenStreams {
                 Err(e)
             }
         }
-    }
-
-    pub fn packet_data_into(&mut self, buf: &mut [u8]) -> Result<()> {
-        if self.tun_input.len() < buf.len() {
-            return Err(Error::BufferTooSmall {
-                max: buf.len(),
-                actual: self.tun_input.len(),
-            });
-        }
-
-        buf.copy_from_slice(&self.tun_input[0..buf.len()]);
-        self.tun_input.advance(buf.len());
-        Ok(())
-    }
-
-    pub fn packet_data_write(&mut self, dst: Address, len: usize) -> Result<()> {
-        let client = match self.map.get_mut(&dst) {
-            Some(v) => v,
-            None => return Err(Error::ClientNotFound),
-        };
-
-        if self.tun_input.len() < len {
-            return Err(Error::BufferTooSmall {
-                max: len,
-                actual: self.tun_input.len(),
-            });
-        }
-
-        if let Err(e) = client.stream.write_all(&self.tun_input[0..len]) {
-            error!("write failure ({e})");
-            self.remove(dst);
-        }
-        self.tun_input.advance(len);
-        Ok(())
     }
 
     pub fn flush_read(&mut self, src: Address) -> Result<()> {
@@ -310,20 +273,21 @@ impl TokenStreams {
         };
 
         let read_len = match client.stream.read(buffer) {
-            Ok(v) => v,
+            Ok(v) => {
+                if 0 == v {
+                    warn!("received EOF for token={addr}");
+                    self.remove(addr);
+                    return Err(Error::Eof);
+                }
+                v
+            }
+            Err(e) if e.kind() == ErrorKind::WouldBlock => 0,
             Err(e) => {
                 error!("read failure ({e})");
                 self.remove(addr);
                 return Err(e.into());
             }
         };
-
-        // EOF
-        if 0 == read_len {
-            warn!("received EOF for token={addr}");
-            self.remove(addr);
-            return Err(Error::Eof);
-        }
 
         Ok(read_len)
     }

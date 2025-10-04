@@ -82,24 +82,32 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
                 }
             } else {
                 if event.is_readable() {
-                    let read_len = match streams.read(event.token().0, &mut read_buffer) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            warn!("Connection terminated ({e})");
-                            let msg = e.into();
-                            if let Err(e) = streams.write_message(TUNNEL_STREAM.0, event.token().0, msg) {
-                                error!("unable to write message for {} ({e})", event.token().0);
-                                return Err(e.into());
+                    loop {
+                        let read_len = match streams.read(event.token().0, &mut read_buffer) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                warn!("Connection terminated ({e})");
+                                let msg = e.into();
+                                if let Err(e) = streams.write_message(TUNNEL_STREAM.0, event.token().0, msg) {
+                                    error!("unable to write message for {} ({e})", event.token().0);
+                                    return Err(e.into());
+                                }
+                                break;
                             }
-                            continue;
+                        };
+
+                        info!("{read_len} from {:?}", event.token());
+
+                        if let Err(e) =
+                            streams.write_packet(TUNNEL_STREAM.0, event.token().0, &read_buffer[0..read_len])
+                        {
+                            error!("unable to write packet for {} ({e})", event.token().0);
+                            return Err(e.into());
                         }
-                    };
 
-                    info!("{read_len} from {:?}", event.token());
-
-                    if let Err(e) = streams.write_packet(TUNNEL_STREAM.0, event.token().0, &read_buffer[0..read_len]) {
-                        error!("unable to write packet for {} ({e})", event.token().0);
-                        return Err(e.into());
+                        if 0 == read_len {
+                            break;
+                        }
                     }
                 } else if event.is_writable() {
                     info!("{:?} is writable", event.token());
