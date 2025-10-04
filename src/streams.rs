@@ -161,8 +161,9 @@ impl TokenStreams {
         };
 
         let p = Packet::new_message(dst, msg);
-
-        p.write(&mut client.stream)?;
+        let mut buf: [u8; HEADER_SIZE] = [0; HEADER_SIZE];
+        p.encode(&mut buf)?;
+        client.stream.write_all(&buf)?;
         client.stream.flush()?;
         Ok(())
     }
@@ -179,7 +180,10 @@ impl TokenStreams {
 
         info!("WRITE: {p}");
 
-        p.write(&mut client.stream)?;
+        let mut buf: [u8; HEADER_SIZE] = [0; HEADER_SIZE];
+        p.encode(&mut buf)?;
+
+        client.stream.write_all(&buf)?;
         client.stream.write_all(data)?;
         client.stream.flush()?;
         Ok(())

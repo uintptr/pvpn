@@ -121,7 +121,7 @@ impl Packet {
         }
     }
 
-    fn encode(&self, buf: &mut [u8]) -> Result<usize> {
+    pub fn encode(&self, buf: &mut [u8]) -> Result<()> {
         let mut cur = Cursor::new(buf);
 
         cur.write_u8(self.ver)?;
@@ -134,7 +134,7 @@ impl Packet {
 
         let used_size: usize = cur.position().try_into()?;
 
-        Ok(used_size)
+        Ok(())
     }
 
     pub fn from_buffer(buf: &[u8]) -> Result<Packet> {
@@ -155,26 +155,6 @@ impl Packet {
         let data_len = cur.read_u32::<LittleEndian>()?;
 
         Ok(Packet::new(addr as Address, msg, data_len))
-    }
-
-    pub fn from_reader<R>(reader: &mut R) -> Result<Packet>
-    where
-        R: Read,
-    {
-        let mut buf: [u8; HEADER_SIZE] = [0; HEADER_SIZE];
-        reader.read_exact(&mut buf)?;
-        Packet::from_buffer(&buf)
-    }
-
-    pub fn write<W>(&self, writer: &mut W) -> Result<()>
-    where
-        W: Write,
-    {
-        let mut hdr: [u8; HEADER_SIZE] = [0; HEADER_SIZE];
-
-        self.encode(&mut hdr)?;
-        writer.write_all(&hdr)?;
-        Ok(())
     }
 }
 
@@ -201,8 +181,7 @@ mod tests {
 
         let p = Packet::new(1, PacketMessage::IoFailure, 10);
         let mut buf: [u8; HEADER_SIZE] = [0; HEADER_SIZE];
-        let enc_len = p.encode(&mut buf).unwrap();
-        assert_eq!(enc_len, HEADER_SIZE);
+        let _enc_len = p.encode(&mut buf).unwrap();
         let p2 = Packet::from_buffer(&buf).unwrap();
         assert_eq!(p, p2);
     }
