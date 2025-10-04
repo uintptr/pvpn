@@ -15,7 +15,6 @@ use crate::{
 const CLIENT_BUFFER_SIZE: usize = 8 * 1024;
 
 pub struct ClientStream {
-    addr: Address,
     stream: TcpStream,
     out_bytes: BytesMut,
     pub is_connected: bool,
@@ -24,7 +23,6 @@ pub struct ClientStream {
 impl ClientStream {
     pub fn new(stream: TcpStream) -> Self {
         Self {
-            addr: 0,
             stream,
             out_bytes: BytesMut::new(),
             is_connected: false,
