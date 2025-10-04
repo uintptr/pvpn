@@ -98,9 +98,9 @@ fn tunnel_handler(mut tstream: TcpStream, server: &str) -> Result<()> {
             } else if TUNNEL_STREAM == event.token() && event.is_readable() {
                 // it's fatal if we the tunnel read fails
 
-                loop {
-                    streams.flush_read(TUNNEL_STREAM.0)?;
+                streams.flush_read(TUNNEL_STREAM.0)?;
 
+                loop {
                     match streams.read_packet(&mut read_buffer) {
                         Ok((read_len, dst_addr)) => {
                             if let Err(e) = streams.write(dst_addr, &mut read_buffer[0..read_len]) {

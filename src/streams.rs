@@ -202,7 +202,7 @@ impl TokenStreams {
         total_len += write_len;
 
         if write_len == hdr.len() {
-            let write_len = match client.stream.write(&hdr) {
+            let write_len = match client.stream.write(&data) {
                 Ok(v) => v,
                 Err(e) if e.kind() == ErrorKind::WouldBlock => {
                     client.push_data(data);
