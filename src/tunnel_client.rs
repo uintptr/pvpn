@@ -107,8 +107,6 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
                             }
                         };
 
-                        info!("{read_len} from {:?}", event.token());
-
                         if 0 == read_len {
                             break;
                         }

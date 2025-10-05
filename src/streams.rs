@@ -16,7 +16,7 @@ const CLIENT_BUFFER_SIZE: usize = 8 * 1024;
 
 pub struct ClientStream {
     stream: TcpStream,
-    out_bytes: BytesMut,
+    buffered: BytesMut,
     pub is_connected: bool,
 }
 
@@ -24,25 +24,24 @@ impl ClientStream {
     pub fn new(stream: TcpStream) -> Self {
         Self {
             stream,
-            out_bytes: BytesMut::new(),
+            buffered: BytesMut::new(),
             is_connected: false,
         }
     }
 
     fn flush_buffer(&mut self) -> Result<usize> {
-        info!("flush({})", self.out_bytes.len());
-
-        if self.out_bytes.is_empty() {
+        if self.buffered.is_empty() {
             return Ok(0);
         }
 
-        let written_len = match self.stream.write(&self.out_bytes) {
-            Ok(v) => v,
-            Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                //
-                // socket not ready
-                //
-                0
+        let buffered_len = self.buffered.len();
+
+        info!("flush({buffered_len})");
+
+        let written_len = match self.stream.write(&self.buffered) {
+            Ok(v) => {
+                self.buffered.advance(v);
+                v
             }
             Err(e) => {
                 error!("write() returned {e}");
@@ -50,15 +49,15 @@ impl ClientStream {
             }
         };
 
-        info!("flushed {} / {}", written_len, self.out_bytes.len());
+        info!("flushed {written_len} / {buffered_len}");
 
-        self.out_bytes.advance(written_len);
+        self.stream.flush()?;
 
         Ok(written_len)
     }
 
     pub fn push_data(&mut self, data: &[u8]) {
-        self.out_bytes.extend_from_slice(data)
+        self.buffered.extend_from_slice(data)
     }
 
     pub fn complete_connect(&mut self) -> Result<usize> {
@@ -136,7 +135,7 @@ impl TokenStreams {
         }
 
         if client.is_connected {
-            client.stream.flush()?;
+            client.flush_buffer()?;
         }
 
         Ok(())
@@ -186,25 +185,18 @@ impl TokenStreams {
         let mut hdr: [u8; HEADER_SIZE] = [0; HEADER_SIZE];
         p.encode(&mut hdr)?;
 
+        let mut total_len = 0;
+        let buffered_len = client.buffered.len();
+
         // flush whatever we could send before
-        let mut total_len = client.flush_buffer()?;
-
-        let write_len = match client.stream.write(&hdr) {
-            Ok(v) => v,
-            Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                client.push_data(&hdr);
-                client.push_data(data);
-                0
-            }
-            Err(e) => return Err(e.into()),
-        };
-
-        total_len += write_len;
-
-        if write_len == hdr.len() {
-            let write_len = match client.stream.write(&data) {
-                Ok(v) => v,
+        if client.buffered.len() > 0 {
+            let write_len = match client.stream.write(&client.buffered) {
+                Ok(v) => {
+                    client.buffered.advance(v);
+                    v
+                }
                 Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                    client.push_data(&hdr);
                     client.push_data(data);
                     0
                 }
@@ -212,6 +204,33 @@ impl TokenStreams {
             };
 
             total_len += write_len;
+        }
+
+        if buffered_len == total_len {
+            let write_len = match client.stream.write(&hdr) {
+                Ok(v) => v,
+                Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                    client.push_data(&hdr);
+                    client.push_data(data);
+                    0
+                }
+                Err(e) => return Err(e.into()),
+            };
+
+            total_len += write_len;
+
+            if write_len == hdr.len() {
+                let write_len = match client.stream.write(&data) {
+                    Ok(v) => v,
+                    Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                        client.push_data(data);
+                        0
+                    }
+                    Err(e) => return Err(e.into()),
+                };
+
+                total_len += write_len;
+            }
         }
 
         client.stream.flush()?;
