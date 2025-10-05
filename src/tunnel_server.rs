@@ -3,7 +3,7 @@ use mio::{
     Events, Interest, Poll, Token,
     net::{TcpListener, TcpStream},
 };
-use std::{io::ErrorKind, thread::sleep, time::Duration};
+use std::io::ErrorKind;
 
 use crate::{
     error::{Error, Result},
