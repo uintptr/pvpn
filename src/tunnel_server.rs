@@ -120,6 +120,9 @@ fn tunnel_handler(mut tstream: TcpStream, server: &str) -> Result<()> {
                             // not a failure case
                             break;
                         }
+                        Err(Error::Eof) => {
+                            break;
+                        }
                         Err(e) => {
                             error!("{e}");
                             return Err(e);
