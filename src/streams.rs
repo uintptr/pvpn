@@ -212,8 +212,6 @@ impl TokenStreams {
             };
 
             total_len += write_len;
-        } else {
-            client.push_data(data);
         }
 
         client.stream.flush()?;
