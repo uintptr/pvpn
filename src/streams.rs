@@ -4,7 +4,7 @@ use std::{
 };
 
 use bytes::{Buf, BytesMut};
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use mio::net::TcpStream;
 
 use crate::{
@@ -36,7 +36,7 @@ impl ClientStream {
 
         let written_len = match self.stream.write(&self.buffered) {
             Ok(v) => {
-                info!("{v} / {buffered}");
+                debug!("{v} / {buffered}");
                 self.buffered.advance(v);
                 v
             }
@@ -157,7 +157,7 @@ impl TokenStreams {
 
         let p = Packet::new_message(dst, msg);
 
-        info!("WRITE: {p}");
+        debug!("WRITE: {p}");
 
         let mut hdr: [u8; HEADER_SIZE] = [0; HEADER_SIZE];
         p.encode(&mut hdr)?;
@@ -179,7 +179,7 @@ impl TokenStreams {
 
         let p = Packet::new_data(dst, data_len);
 
-        info!("WRITE: {p}");
+        debug!("WRITE: {p}");
 
         let mut hdr: [u8; HEADER_SIZE] = [0; HEADER_SIZE];
         p.encode(&mut hdr)?;

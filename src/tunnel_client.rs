@@ -113,8 +113,6 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
                         streams.write_packet(TUNNEL_STREAM.0, event.token().0, &read_buffer[0..read_len])?;
                     }
                 } else if event.is_writable() {
-                    info!("{:?} is writable", event.token());
-
                     if let Err(e) = streams.flush(event.token().0) {
                         error!("flush failure for {} {e}", event.token().0);
                         return Err(e.into());
