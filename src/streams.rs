@@ -211,7 +211,7 @@ impl TokenStreams {
             return Err(Error::NotEnoughData);
         }
 
-        info!("READ:  {p}");
+        debug!("READ:  {p}");
 
         self.tun_input.advance(HEADER_SIZE);
 
