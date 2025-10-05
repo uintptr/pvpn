@@ -32,22 +32,22 @@ impl ClientStream {
             return Ok(0);
         }
 
-        let buffered_len = self.buffered.len();
-
-        info!("flush({buffered_len})");
+        let buffered = self.buffered.len();
 
         let written_len = match self.stream.write(&self.buffered) {
             Ok(v) => {
+                info!("{v} / {buffered}");
                 self.buffered.advance(v);
                 v
             }
-            Err(e) => {
-                error!("write() returned {e}");
-                return Err(e.into());
+            Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                //
+                // that's expected
+                //
+                0
             }
+            Err(e) => return Err(e.into()),
         };
-
-        info!("flushed {written_len} / {buffered_len}");
 
         self.stream.flush()?;
 
@@ -159,10 +159,13 @@ impl TokenStreams {
 
         info!("WRITE: {p}");
 
-        let mut buf: [u8; HEADER_SIZE] = [0; HEADER_SIZE];
-        p.encode(&mut buf)?;
-        client.stream.write_all(&buf)?;
-        client.stream.flush()?;
+        let mut hdr: [u8; HEADER_SIZE] = [0; HEADER_SIZE];
+        p.encode(&mut hdr)?;
+
+        client.push_data(&hdr);
+
+        client.flush_buffer()?;
+
         Ok(())
     }
 
@@ -181,58 +184,10 @@ impl TokenStreams {
         let mut hdr: [u8; HEADER_SIZE] = [0; HEADER_SIZE];
         p.encode(&mut hdr)?;
 
-        let buffered_len = client.buffered.len();
+        client.push_data(&hdr);
+        client.push_data(data);
 
-        // flush whatever we could send before
-        if buffered_len > 0 {
-            //
-            // we have something to flush
-            //
-            let flushed_len = match client.stream.write(&client.buffered) {
-                Ok(v) => {
-                    client.buffered.advance(v);
-                    v
-                }
-                Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                    client.push_data(&hdr);
-                    client.push_data(data);
-                    return Ok(());
-                }
-                Err(e) => return Err(e.into()),
-            };
-
-            if flushed_len != buffered_len {
-                //
-                // couldn't write the whole thing
-                //
-                client.push_data(&hdr);
-                client.push_data(data);
-                return Ok(());
-            }
-        }
-
-        //
-        // Write the header
-        //
-        match client.stream.write(&hdr) {
-            Ok(_) => {}
-            Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                client.push_data(&hdr);
-                client.push_data(data);
-                return Ok(());
-            }
-            Err(e) => return Err(e.into()),
-        };
-
-        match client.stream.write(&data) {
-            Ok(_) => {}
-            Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                client.push_data(data);
-            }
-            Err(e) => return Err(e.into()),
-        }
-
-        client.stream.flush()?;
+        client.flush_buffer()?;
 
         Ok(())
     }
