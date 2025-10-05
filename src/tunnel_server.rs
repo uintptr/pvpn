@@ -123,8 +123,8 @@ fn tunnel_handler(mut tstream: TcpStream, server: &str) -> Result<()> {
                             break;
                         }
                         Err(e) => {
-                            warn!("{e}");
-                            break;
+                            error!("{e}");
+                            return Err(e);
                         }
                     }
                 }
