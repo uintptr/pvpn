@@ -25,6 +25,8 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
 
     let mut read_buffer: [u8; 8196] = [0; 8196];
 
+    info!("-----------------------------CLIENT-----------------------------");
+
     loop {
         if let Err(e) = poll.poll(&mut events, None) {
             error!("poll() failure {e}");
