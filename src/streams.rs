@@ -12,8 +12,6 @@ use crate::{
     packet::{Address, HEADER_SIZE, Packet, PacketMessage},
 };
 
-const CLIENT_BUFFER_SIZE: usize = 8 * 1024;
-
 pub struct ClientStream {
     stream: TcpStream,
     buffered: BytesMut,
@@ -92,7 +90,6 @@ impl ClientStream {
 
 pub struct TokenStreams {
     map: HashMap<Address, ClientStream>,
-    tun_buffer: [u8; CLIENT_BUFFER_SIZE],
     tun_input: BytesMut,
 }
 
@@ -102,7 +99,6 @@ impl TokenStreams {
 
         Self {
             map: HashMap::new(),
-            tun_buffer: [0; CLIENT_BUFFER_SIZE],
             tun_input,
         }
     }
@@ -294,14 +290,14 @@ impl TokenStreams {
         }
     }
 
-    pub fn flush_read(&mut self, src: Address) -> Result<()> {
+    pub fn flush_read(&mut self, src: Address, buf: &mut [u8]) -> Result<()> {
         let client = match self.map.get_mut(&src) {
             Some(v) => v,
             None => return Err(Error::ClientNotFound),
         };
 
         loop {
-            let read_len = match client.stream.read(&mut self.tun_buffer) {
+            let read_len = match client.stream.read(buf) {
                 Ok(v) => v,
                 Err(e) if e.kind() == ErrorKind::WouldBlock => break Ok(()),
                 Err(e) => return Err(e.into()),
@@ -311,7 +307,7 @@ impl TokenStreams {
                 break Err(Error::Eof);
             }
 
-            self.tun_input.extend_from_slice(&self.tun_buffer[0..read_len]);
+            self.tun_input.extend_from_slice(&buf[0..read_len]);
         }
     }
 

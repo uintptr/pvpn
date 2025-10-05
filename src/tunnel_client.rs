@@ -35,7 +35,7 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
 
         for event in events.iter() {
             if TUNNEL_STREAM == event.token() && event.is_readable() {
-                streams.flush_read(TUNNEL_STREAM.0)?;
+                streams.flush_read(TUNNEL_STREAM.0, &mut read_buffer)?;
 
                 loop {
                     let (read_len, dst_addr) = match streams.read_packet(&mut read_buffer) {

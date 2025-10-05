@@ -3,7 +3,7 @@ use mio::{
     Events, Interest, Poll, Token,
     net::{TcpListener, TcpStream},
 };
-use std::io::ErrorKind;
+use std::{io::ErrorKind, thread::sleep, time::Duration};
 
 use crate::{
     error::{Error, Result},
@@ -98,7 +98,9 @@ fn tunnel_handler(mut tstream: TcpStream, server: &str) -> Result<()> {
             } else if TUNNEL_STREAM == event.token() && event.is_readable() {
                 // it's fatal if we the tunnel read fails
 
-                streams.flush_read(TUNNEL_STREAM.0)?;
+                sleep(Duration::from_millis(255));
+
+                streams.flush_read(TUNNEL_STREAM.0, &mut read_buffer)?;
 
                 loop {
                     match streams.read_packet(&mut read_buffer) {
@@ -127,7 +129,6 @@ fn tunnel_handler(mut tstream: TcpStream, server: &str) -> Result<()> {
                     }
                 }
             } else if TUNNEL_STREAM == event.token() && event.is_writable() {
-                info!("{} is writable", TUNNEL_STREAM.0);
                 if let Err(e) = streams.flush(TUNNEL_STREAM.0) {
                     error!("flush failure for {} {e}", TUNNEL_STREAM.0);
                     return Err(e.into());
