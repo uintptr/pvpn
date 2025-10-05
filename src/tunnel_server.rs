@@ -42,7 +42,7 @@ fn tunnel_accept(tunnel: &str) -> Result<TcpStream> {
         }
     }
 
-    return Err(Error::ClientNotFound);
+    Err(Error::ClientNotFound)
 }
 
 fn tunnel_handler(mut tstream: TcpStream, server: &str) -> Result<()> {
@@ -89,7 +89,7 @@ fn tunnel_handler(mut tstream: TcpStream, server: &str) -> Result<()> {
                 let token = Token(token_id);
 
                 poll.registry()
-                    .register(&mut istream, token.clone(), Interest::READABLE | Interest::WRITABLE)?;
+                    .register(&mut istream, token, Interest::READABLE | Interest::WRITABLE)?;
 
                 let iclient = ClientStream::new(istream);
                 streams.add(token.0, iclient);
@@ -103,12 +103,12 @@ fn tunnel_handler(mut tstream: TcpStream, server: &str) -> Result<()> {
                 loop {
                     match streams.read_packet(&mut read_buffer) {
                         Ok((read_len, dst_addr)) => {
-                            if let Err(e) = streams.write(dst_addr, &mut read_buffer[0..read_len]) {
+                            if let Err(e) = streams.write(dst_addr, &read_buffer[0..read_len]) {
                                 warn!("Connection terminated ({e})");
                                 let msg = e.into();
                                 if let Err(e) = streams.write_message(TUNNEL_STREAM.0, event.token().0, msg) {
                                     error!("unable to write message for {} ({e})", event.token().0);
-                                    return Err(e.into());
+                                    return Err(e);
                                 }
                             }
                         }
@@ -132,27 +132,25 @@ fn tunnel_handler(mut tstream: TcpStream, server: &str) -> Result<()> {
             } else if TUNNEL_STREAM == event.token() && event.is_writable() {
                 if let Err(e) = streams.flush(TUNNEL_STREAM.0) {
                     error!("flush failure for {} {e}", TUNNEL_STREAM.0);
-                    return Err(e.into());
+                    return Err(e);
                 }
-            } else {
-                if event.is_readable() {
-                    match streams.read(event.token().0, &mut read_buffer) {
-                        Ok(v) => {
-                            info!("read {v} bytes from internet {:?}", event.token());
-                            streams.write_packet(TUNNEL_STREAM.0, event.token().0, &read_buffer[0..v])?;
-                        }
-                        Err(e) => {
-                            info!("{e}");
-                            streams.write_message(TUNNEL_STREAM.0, event.token().0, PacketMessage::Disconnected)?
-                        }
+            } else if event.is_readable() {
+                match streams.read(event.token().0, &mut read_buffer) {
+                    Ok(v) => {
+                        info!("read {v} bytes from internet {:?}", event.token());
+                        streams.write_packet(TUNNEL_STREAM.0, event.token().0, &read_buffer[0..v])?;
                     }
-                } else if event.is_writable() {
-                    //
-                    // writable... feels like we should use this
-                    //
-                    if let Err(e) = streams.flush(event.token().0) {
-                        error!("flush({}) => {e}", event.token().0)
+                    Err(e) => {
+                        info!("{e}");
+                        streams.write_message(TUNNEL_STREAM.0, event.token().0, PacketMessage::Disconnected)?
                     }
+                }
+            } else if event.is_writable() {
+                //
+                // writable... feels like we should use this
+                //
+                if let Err(e) = streams.flush(event.token().0) {
+                    error!("flush({}) => {e}", event.token().0)
                 }
             }
         }

@@ -88,6 +88,7 @@ impl ClientStream {
     }
 }
 
+#[derive(Default)]
 pub struct TokenStreams {
     map: HashMap<Address, ClientStream>,
     tun_input: BytesMut,
@@ -101,10 +102,6 @@ impl TokenStreams {
             map: HashMap::new(),
             tun_input,
         }
-    }
-
-    pub fn len(&self) -> usize {
-        self.map.len()
     }
 
     pub fn add(&mut self, addr: Address, client: ClientStream) {

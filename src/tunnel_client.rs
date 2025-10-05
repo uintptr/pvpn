@@ -55,12 +55,12 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
                     info!("{read_len} bytes for addr={dst_addr}");
 
                     if streams.contains_token(dst_addr) {
-                        if let Err(e) = streams.write(dst_addr, &mut read_buffer[0..read_len]) {
+                        if let Err(e) = streams.write(dst_addr, &read_buffer[0..read_len]) {
                             warn!("Connection terminated ({e})");
                             let msg = e.into();
                             if let Err(e) = streams.write_message(TUNNEL_STREAM.0, event.token().0, msg) {
                                 error!("unable to write message for {} ({e})", event.token().0);
-                                return Err(e.into());
+                                return Err(e);
                             }
                         }
                     } else {
@@ -88,36 +88,34 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
             } else if TUNNEL_STREAM == event.token() && event.is_writable() {
                 if let Err(e) = streams.flush(TUNNEL_STREAM.0) {
                     error!("flush failure for {} {e}", TUNNEL_STREAM.0);
-                    return Err(e.into());
+                    return Err(e);
                 }
-            } else {
-                if event.is_readable() {
-                    loop {
-                        let read_len = match streams.read(event.token().0, &mut read_buffer) {
-                            Ok(v) => v,
-                            Err(e) => {
-                                warn!("Connection terminated ({e})");
-                                let msg = e.into();
-                                if let Err(e) = streams.write_message(TUNNEL_STREAM.0, event.token().0, msg) {
-                                    error!("unable to write message for {} ({e})", event.token().0);
-                                    return Err(e.into());
-                                }
-                                break;
+            } else if event.is_readable() {
+                loop {
+                    let read_len = match streams.read(event.token().0, &mut read_buffer) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            warn!("Connection terminated ({e})");
+                            let msg = e.into();
+                            if let Err(e) = streams.write_message(TUNNEL_STREAM.0, event.token().0, msg) {
+                                error!("unable to write message for {} ({e})", event.token().0);
+                                return Err(e);
                             }
-                        };
-
-                        if 0 == read_len {
                             break;
                         }
+                    };
 
-                        streams.write_packet(TUNNEL_STREAM.0, event.token().0, &read_buffer[0..read_len])?;
+                    if 0 == read_len {
+                        break;
                     }
-                } else if event.is_writable() {
-                    if let Err(e) = streams.flush(event.token().0) {
-                        error!("flush failure for {} {e}", event.token().0);
-                        return Err(e.into());
-                    }
+
+                    streams.write_packet(TUNNEL_STREAM.0, event.token().0, &read_buffer[0..read_len])?;
                 }
+            } else if event.is_writable()
+                && let Err(e) = streams.flush(event.token().0)
+            {
+                error!("flush failure for {} {e}", event.token().0);
+                return Err(e);
             }
         }
     }

@@ -56,9 +56,9 @@ pub enum Error {
 impl core::fmt::Display for Error {
     fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::result::Result<(), core::fmt::Error> {
         match self {
-            Error::Io(io) => match io.kind() {
-                e => write!(fmt, "{e}"),
-            },
+            Error::Io(io) => {
+                write!(fmt, "{}", io.kind())
+            }
             _ => write!(fmt, "{self:?}"),
         }
     }
