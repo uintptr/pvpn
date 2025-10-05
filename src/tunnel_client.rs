@@ -111,18 +111,7 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
                             break;
                         }
 
-                        let len =
-                            match streams.write_packet(TUNNEL_STREAM.0, event.token().0, &read_buffer[0..read_len]) {
-                                Ok(v) => v,
-                                Err(e) => return Err(e.into()),
-                            };
-
-                        //
-                        // stream is not writable anymore
-                        //
-                        if 0 == len {
-                            break;
-                        }
+                        streams.write_packet(TUNNEL_STREAM.0, event.token().0, &read_buffer[0..read_len])?;
                     }
                 } else if event.is_writable() {
                     info!("{:?} is writable", event.token());
