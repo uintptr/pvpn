@@ -20,7 +20,7 @@ use crate::error::{Error, Result};
 
 const PACKET_VERSION: u8 = 1;
 const SCRATCH_SIZE: usize = 8 * 1024;
-pub const HEADER_SIZE: usize = 14;
+pub const HEADER_SIZE: usize = 6;
 
 #[derive(Display, Debug, Clone, Copy, PartialEq)]
 #[repr(u8)]
@@ -80,7 +80,7 @@ pub struct Packet {
     pub ver: u8,
     pub msg: PacketMessage,
     pub addr: Address,
-    pub data_len: u32,
+    pub data_len: u16,
 }
 
 impl Display for Packet {
@@ -94,7 +94,7 @@ impl Display for Packet {
 }
 
 impl Packet {
-    pub fn new(addr: Address, msg: PacketMessage, data_len: u32) -> Packet {
+    pub fn new(addr: Address, msg: PacketMessage, data_len: u16) -> Packet {
         Self {
             ver: PACKET_VERSION,
             msg,
@@ -103,7 +103,7 @@ impl Packet {
         }
     }
 
-    pub fn new_data(addr: Address, data_len: u32) -> Packet {
+    pub fn new_data(addr: Address, data_len: u16) -> Packet {
         Self {
             ver: PACKET_VERSION,
             msg: PacketMessage::Data,
@@ -127,10 +127,10 @@ impl Packet {
         cur.write_u8(self.ver)?;
         cur.write_u8(self.msg as u8)?;
 
-        let addr_32: u32 = self.addr.try_into()?;
+        let addr_16: u16 = self.addr.try_into()?;
 
-        cur.write_u32::<LittleEndian>(addr_32)?;
-        cur.write_u32::<LittleEndian>(self.data_len)?;
+        cur.write_u16::<LittleEndian>(addr_16)?;
+        cur.write_u16::<LittleEndian>(self.data_len)?;
 
         let used_size: usize = cur.position().try_into()?;
 
@@ -152,7 +152,7 @@ impl Packet {
         let msg: PacketMessage = cur.read_u8()?.try_into()?;
 
         let addr: Address = cur.read_u32::<LittleEndian>()?.try_into()?;
-        let data_len = cur.read_u32::<LittleEndian>()?;
+        let data_len = cur.read_u16::<LittleEndian>()?;
 
         Ok(Packet::new(addr as Address, msg, data_len))
     }

@@ -175,7 +175,7 @@ impl TokenStreams {
             None => return Err(Error::ClientNotFound),
         };
 
-        let data_len: u32 = data.len().try_into()?;
+        let data_len: u16 = data.len().try_into()?;
 
         let p = Packet::new_data(dst, data_len);
 
@@ -203,7 +203,7 @@ impl TokenStreams {
         //
         // Do we also have the data available
         //
-        let data_len: usize = p.data_len.try_into()?;
+        let data_len: usize = p.data_len.into();
         let total_length = HEADER_SIZE + data_len;
 
         if total_length > self.tun_input.len() {
