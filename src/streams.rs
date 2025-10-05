@@ -170,7 +170,7 @@ impl TokenStreams {
         Ok(())
     }
 
-    pub fn write_packet(&mut self, src: Address, dst: Address, data: &[u8]) -> Result<usize> {
+    pub fn write_packet(&mut self, src: Address, dst: Address, data: &[u8]) -> Result<()> {
         let client = match self.map.get_mut(&src) {
             Some(v) => v,
             None => return Err(Error::ClientNotFound),
@@ -185,12 +185,14 @@ impl TokenStreams {
         let mut hdr: [u8; HEADER_SIZE] = [0; HEADER_SIZE];
         p.encode(&mut hdr)?;
 
-        let mut total_len = 0;
         let buffered_len = client.buffered.len();
 
         // flush whatever we could send before
-        if client.buffered.len() > 0 {
-            let write_len = match client.stream.write(&client.buffered) {
+        if buffered_len > 0 {
+            //
+            // we have something to flush
+            //
+            let flushed_len = match client.stream.write(&client.buffered) {
                 Ok(v) => {
                     client.buffered.advance(v);
                     v
@@ -198,44 +200,45 @@ impl TokenStreams {
                 Err(e) if e.kind() == ErrorKind::WouldBlock => {
                     client.push_data(&hdr);
                     client.push_data(data);
-                    0
+                    return Ok(());
                 }
                 Err(e) => return Err(e.into()),
             };
 
-            total_len += write_len;
+            if flushed_len != buffered_len {
+                //
+                // couldn't write the whole thing
+                //
+                client.push_data(&hdr);
+                client.push_data(data);
+                return Ok(());
+            }
         }
 
-        if buffered_len == total_len {
-            let write_len = match client.stream.write(&hdr) {
-                Ok(v) => v,
-                Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                    client.push_data(&hdr);
-                    client.push_data(data);
-                    0
-                }
-                Err(e) => return Err(e.into()),
-            };
-
-            total_len += write_len;
-
-            if write_len == hdr.len() {
-                let write_len = match client.stream.write(&data) {
-                    Ok(v) => v,
-                    Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                        client.push_data(data);
-                        0
-                    }
-                    Err(e) => return Err(e.into()),
-                };
-
-                total_len += write_len;
+        //
+        // Write the header
+        //
+        match client.stream.write(&hdr) {
+            Ok(_) => {}
+            Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                client.push_data(&hdr);
+                client.push_data(data);
+                return Ok(());
             }
+            Err(e) => return Err(e.into()),
+        };
+
+        match client.stream.write(&data) {
+            Ok(_) => {}
+            Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                client.push_data(data);
+            }
+            Err(e) => return Err(e.into()),
         }
 
         client.stream.flush()?;
 
-        Ok(total_len)
+        Ok(())
     }
 
     pub fn read_packet(&mut self, buf: &mut [u8]) -> Result<(usize, Address)> {
