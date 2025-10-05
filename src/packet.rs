@@ -151,7 +151,7 @@ impl Packet {
 
         let msg: PacketMessage = cur.read_u8()?.try_into()?;
 
-        let addr: Address = cur.read_u32::<LittleEndian>()?.try_into()?;
+        let addr: u16 = cur.read_u16::<LittleEndian>()?;
         let data_len = cur.read_u16::<LittleEndian>()?;
 
         Ok(Packet::new(addr as Address, msg, data_len))
