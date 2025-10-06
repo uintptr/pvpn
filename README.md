@@ -2,6 +2,9 @@
 
 ## Architecture
 
+Not knowing if this'll scale or even worth doing but it's currently not using
+threads/forks and doing a litle copy and malloc as possible
+
 ### Server ( internet facing )
 
 Listens on a publicly available port ( 8080 ) and forwards the connection
