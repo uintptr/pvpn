@@ -3,7 +3,7 @@
 ## Architecture
 
 Not knowing if this'll scale or even worth doing but it's currently not using
-threads/forks and doing a litle copy and malloc as possible
+threads/forks and doing as little copy and malloc as possible
 
 ### Server ( internet facing )
 
