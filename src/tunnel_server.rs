@@ -73,6 +73,8 @@ fn tunnel_handler(mut tstream: TcpStream, server: &str) -> Result<()> {
 
     streams.add(TUNNEL_STREAM.0, ClientStream::new(tstream));
 
+    info!("-----------------------------SERVER-----------------------------");
+
     loop {
         poll.poll(&mut events, None)?;
 
