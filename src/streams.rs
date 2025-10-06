@@ -207,7 +207,7 @@ impl TokenStreams {
             //
             // Not enough data
             //
-            warn!("not enough data {} < {total_length}", self.tun_input.len());
+            debug!("not enough data {} < {total_length}", self.tun_input.len());
             return Err(Error::NotEnoughData);
         }
 
