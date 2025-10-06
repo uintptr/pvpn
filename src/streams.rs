@@ -18,6 +18,8 @@ pub struct ClientStream {
     pub is_connected: bool,
 }
 
+pub const BUFFER_SIZE: usize = 8 * 1024;
+
 impl ClientStream {
     pub fn new(stream: TcpStream) -> Self {
         Self {
@@ -272,7 +274,7 @@ impl TokenStreams {
         let read_len = match client.stream.read(buffer) {
             Ok(v) => {
                 if 0 == v {
-                    warn!("received EOF for token={addr}");
+                    debug!("received EOF for token={addr}");
                     self.remove(addr);
                     return Err(Error::Eof);
                 }

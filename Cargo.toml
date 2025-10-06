@@ -14,5 +14,5 @@ byteorder = "1.5.0"
 
 [profile.release]
 strip = true    # Automatically strip symbols from the binary.
-opt-level = "s" # Optimize for speed
+opt-level = 3   # Optimize for speed
 lto = true

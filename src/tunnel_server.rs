@@ -8,7 +8,7 @@ use std::io::ErrorKind;
 use crate::{
     error::{Error, Result},
     packet::PacketMessage,
-    streams::{ClientStream, TokenStreams},
+    streams::{BUFFER_SIZE, ClientStream, TokenStreams},
 };
 
 // Ports that the client side conected to
@@ -60,7 +60,7 @@ fn tunnel_handler(mut tstream: TcpStream, server: &str) -> Result<()> {
 
     let mut streams = TokenStreams::new();
 
-    let mut read_buffer: [u8; 8196] = [0; 8196];
+    let mut read_buffer: [u8; BUFFER_SIZE] = [0; BUFFER_SIZE];
 
     poll.registry()
         .register(&mut tstream, TUNNEL_STREAM, Interest::READABLE | Interest::WRITABLE)?;

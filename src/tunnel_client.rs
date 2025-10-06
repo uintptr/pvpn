@@ -6,7 +6,7 @@ use log::{error, info, warn};
 
 use crate::{
     error::{Error, Result},
-    streams::{ClientStream, TokenStreams},
+    streams::{BUFFER_SIZE, ClientStream, TokenStreams},
 };
 
 const TUNNEL_STREAM: Token = Token(1);
@@ -23,7 +23,7 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
 
     streams.add(TUNNEL_STREAM.0, ClientStream::new(tstream));
 
-    let mut read_buffer: [u8; 8196] = [0; 8196];
+    let mut read_buffer: [u8; BUFFER_SIZE] = [0; BUFFER_SIZE];
 
     info!("-----------------------------CLIENT-----------------------------");
 
@@ -44,6 +44,10 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
                             break;
                         }
                         Err(Error::NotEnoughData) => {
+                            break;
+                        }
+                        Err(Error::Eof) => {
+                            // expected
                             break;
                         }
                         Err(e) => {
