@@ -1,25 +1,14 @@
-#![allow(unused)]
 use std::{
     fmt::Display,
-    fs::read,
-    hash::{DefaultHasher, Hash, Hasher},
-    io::{Cursor, ErrorKind, Read, Seek, SeekFrom, Write},
-    mem,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
-    ops::Add,
-    ptr::hash,
+    io::{Cursor, ErrorKind},
 };
 
-use byteorder::{LittleEndian, NetworkEndian, ReadBytesExt, WriteBytesExt};
-use bytes::buf;
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use derive_more::Display;
-use log::{error, info};
-use mio::net::TcpStream;
 
 use crate::error::{Error, Result};
 
 const PACKET_VERSION: u8 = 1;
-const SCRATCH_SIZE: usize = 8 * 1024;
 pub const HEADER_SIZE: usize = 6;
 
 #[derive(Display, Debug, Clone, Copy, PartialEq)]
@@ -131,8 +120,6 @@ impl Packet {
 
         cur.write_u16::<LittleEndian>(addr_16)?;
         cur.write_u16::<LittleEndian>(self.data_len)?;
-
-        let used_size: usize = cur.position().try_into()?;
 
         Ok(())
     }

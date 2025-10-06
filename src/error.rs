@@ -1,10 +1,6 @@
 pub type Result<T> = core::result::Result<T, Error>;
 
-use std::num::TryFromIntError;
-
 use derive_more::From;
-
-use crate::packet::PacketMessage;
 
 #[derive(Debug, From)]
 pub enum Error {
@@ -12,12 +8,8 @@ pub enum Error {
     Eof,
     Empty,
     NotEnoughData,
-    ConnectionNotFound,
     ConnectionRefused,
     ClientNotFound,
-    TunnelError {
-        msg: PacketMessage,
-    },
     BufferTooSmall {
         max: usize,
         actual: usize,
@@ -25,10 +17,6 @@ pub enum Error {
     InvalidVersion {
         expected: u8,
         actual: u8,
-    },
-    InvalidReadLen {
-        expected: usize,
-        actual: usize,
     },
     InvalidMessageType {
         msg: u8,
@@ -40,7 +28,7 @@ pub enum Error {
     #[from]
     Io(std::io::Error),
     #[from]
-    DowncastError(TryFromIntError),
+    DowncastError(std::num::TryFromIntError),
 
     //
     // 3rd party
