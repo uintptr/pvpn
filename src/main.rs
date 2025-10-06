@@ -84,8 +84,7 @@ fn setup_logger(verbose: bool) -> Result<()> {
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let args = UserArgs::parse();
 
     match &args.command {
@@ -100,7 +99,7 @@ async fn main() -> Result<()> {
 
             setup_logger(opt.verbose)?;
 
-            client_main(&tunnel, &server, opt.reconnect_delay).await
+            client_main(&tunnel, &server, opt.reconnect_delay)
         }
         Commands::Server(opt) => {
             let tunnel = format!("{}:{}", opt.tunnel_address, opt.tunnel_port);
@@ -112,7 +111,7 @@ async fn main() -> Result<()> {
 
             setup_logger(opt.verbose)?;
 
-            server_main(&server, &tunnel).await
+            server_main(&server, &tunnel)
         }
     }
 }

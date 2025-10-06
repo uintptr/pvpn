@@ -1,145 +1,179 @@
-use std::{collections::HashMap, sync::Arc};
-
-use log::{error, info};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt, WriteHalf, split},
+use log::{error, info, warn};
+use mio::{
+    Events, Interest, Poll, Token,
     net::{TcpListener, TcpStream},
-    select,
-    sync::{
-        Mutex,
-        mpsc::{self, Receiver, Sender},
-    },
-    task::JoinSet,
 };
+use std::io::ErrorKind;
 
 use crate::{
     error::{Error, Result},
-    packet::PacketStream,
+    packet::PacketMessage,
+    streams::{BUFFER_SIZE, ClientStream, TokenStreams},
 };
 
-async fn client_loop(
-    cwriter_mtx: Arc<Mutex<WriteHalf<TcpStream>>>,
-    addr: u64,
-    mut istream: TcpStream,
-    mut rx: Receiver<(u64, Vec<u8>)>,
-) -> Result<()> {
-    let mut buf: [u8; 8196] = [0; 8196];
+// Ports that the client side conected to
+const TUNNEL_PORT: Token = Token(1);
+// Stream between the client and the server
+const TUNNEL_STREAM: Token = Token(2);
+// Internet exposed port
+const INTERNET_PORT: Token = Token(3);
 
-    let mut ps = PacketStream::new();
+fn tunnel_accept(tunnel: &str) -> Result<TcpStream> {
+    let mut poll = Poll::new()?;
+    let mut events = Events::with_capacity(128);
 
-    let mut msg_id = 0;
+    let tunnel_addr = tunnel.parse()?;
+    let mut tunnel_listener = TcpListener::bind(tunnel_addr)?;
 
-    loop {
-        select! {
-            Some((_, data)) = rx.recv() => {
-                istream.writable().await?;
-                istream.write_all(&data).await?;
-            }
-            ret = istream.readable() =>
-            {
-                if let Err(e) = ret{
-                    return Err(e.into());
-                }
+    poll.registry()
+        .register(&mut tunnel_listener, TUNNEL_PORT, Interest::READABLE)?;
 
-                let len = istream.read(&mut buf).await?;
+    poll.poll(&mut events, None)?;
 
-                if 0 == len {
-                    break Err(Error::EOF);
-                }
-                let mut writer = cwriter_mtx.lock().await;
-                ps.write(&mut *writer, msg_id,addr, &buf[0..len]).await?;
-            }
+    for event in events.iter() {
+        if TUNNEL_PORT == event.token() {
+            //
+            // This is the pvpn client connecting
+            //
+            let (tstream, iaddr) = tunnel_listener.accept()?;
+
+            info!("tunnel connected: {:?}", iaddr);
+            return Ok(tstream);
         }
-
-        msg_id += 1;
     }
+
+    Err(Error::ClientNotFound)
 }
 
-async fn tunnel_handler(tunnel: TcpStream, server: &str) -> Result<()> {
+fn tunnel_handler(mut tstream: TcpStream, server: &str) -> Result<()> {
     info!("starting internet listener on {server}");
 
-    let ilistener = TcpListener::bind(server).await?;
+    let mut poll = Poll::new()?;
 
-    let mut ps = PacketStream::new();
+    let mut events = Events::with_capacity(128);
 
-    let (mut treader, twriter) = split(tunnel);
-    let cwriter_mtx = Arc::new(Mutex::new(twriter));
+    let server_addr = server.parse()?;
 
-    let mut threads: JoinSet<u64> = JoinSet::new();
-    let mut conn_table: HashMap<u64, Sender<(u64, Vec<u8>)>> = HashMap::new();
+    let mut server_listener = TcpListener::bind(server_addr)?;
 
-    info!("server is ready");
+    let mut token_id: usize = 4;
+
+    let mut streams = TokenStreams::new();
+
+    let mut read_buffer: [u8; BUFFER_SIZE] = [0; BUFFER_SIZE];
+
+    poll.registry()
+        .register(&mut tstream, TUNNEL_STREAM, Interest::READABLE | Interest::WRITABLE)?;
+
+    poll.registry().register(
+        &mut server_listener,
+        INTERNET_PORT,
+        Interest::READABLE | Interest::WRITABLE,
+    )?;
+
+    streams.add(TUNNEL_STREAM.0, ClientStream::new(tstream));
+
+    info!("-----------------------------SERVER-----------------------------");
 
     loop {
-        tokio::select! {
-            Ok((istream, iaddr)) = ilistener.accept() => {
-                info!("internet connected: {:?}", iaddr);
+        poll.poll(&mut events, None)?;
 
-                let addr = PacketStream::addr_from_sockaddr(&iaddr);
-                let (tx, rx) = mpsc::channel(32);
-                let cwriter_mtx = cwriter_mtx.clone();
+        for event in events.iter() {
+            if INTERNET_PORT == event.token() {
+                //
+                //
+                //
+                let (mut istream, iaddr) = server_listener.accept()?;
+                info!("internet connected: {:?} (token={token_id})", iaddr);
 
-                threads.spawn(async move {
-                    let res = client_loop(cwriter_mtx, addr, istream, rx).await;
+                let token = Token(token_id);
 
+                poll.registry()
+                    .register(&mut istream, token, Interest::READABLE | Interest::WRITABLE)?;
 
-                    match &res{
-                        Ok(_) => {}
-                        Err(Error::EOF) => {
-                            info!("client EOF");
+                let iclient = ClientStream::new(istream);
+                streams.add(token.0, iclient);
+
+                token_id += 1;
+            } else if TUNNEL_STREAM == event.token() && event.is_readable() {
+                // it's fatal if we the tunnel read fails
+
+                streams.flush_read(TUNNEL_STREAM.0, &mut read_buffer)?;
+
+                loop {
+                    match streams.read_packet(&mut read_buffer) {
+                        Ok((read_len, dst_addr)) => {
+                            if let Err(e) = streams.write(dst_addr, &read_buffer[0..read_len]) {
+                                warn!("Connection terminated ({e})");
+                                let msg = e.into();
+                                if let Err(e) = streams.write_message(TUNNEL_STREAM.0, event.token().0, msg) {
+                                    error!("unable to write message for {} ({e})", event.token().0);
+                                    return Err(e);
+                                }
+                            }
+                        }
+                        Err(Error::Empty) => {
+                            // not a failure case
+                            break;
+                        }
+                        Err(Error::NotEnoughData) => {
+                            // not a failure case
+                            break;
+                        }
+                        Err(Error::Eof) => {
+                            break;
                         }
                         Err(e) => {
-                            error!("thread returned error={e}");
+                            error!("{e}");
+                            return Err(e);
                         }
                     }
-                    addr
-                });
-
-
-                if conn_table.insert(addr, tx).is_some(){
-                    error!("addr={addr} already in table");
-                    break Err(Error::ConnectionNotFound)
                 }
-            }
-            res = ps.read(&mut treader) => {
-
-                match res{
-                    Ok((addr,data)) => {
-                        //
-                        // tunnel send data for the internet connection
-                        //
-                        match conn_table.get(&addr){
-                            Some(tx) => {
-                                tx.send((addr,data)).await?;
-                            }
-                            None => {
-                                error!("unable to find addr={}",addr );
-                                break Err(Error::ConnectionNotFound)
-                            }
-                        }
+            } else if TUNNEL_STREAM == event.token() && event.is_writable() {
+                if let Err(e) = streams.flush(TUNNEL_STREAM.0) {
+                    error!("flush failure for {} {e}", TUNNEL_STREAM.0);
+                    return Err(e);
+                }
+            } else if event.is_readable() {
+                match streams.read(event.token().0, &mut read_buffer) {
+                    Ok(v) => {
+                        info!("read {v} bytes from internet {:?}", event.token());
+                        streams.write_packet(TUNNEL_STREAM.0, event.token().0, &read_buffer[0..v])?;
                     }
                     Err(e) => {
-                        break Err(e)
+                        info!("{e}");
+                        streams.write_message(TUNNEL_STREAM.0, event.token().0, PacketMessage::Disconnected)?
                     }
                 }
-            }
-            Some(Ok(addr)) = threads.join_next() =>{
-                conn_table.remove(&addr);
+            } else if event.is_writable() {
+                //
+                // writable... feels like we should use this
+                //
+                if let Err(e) = streams.flush(event.token().0) {
+                    error!("flush({}) => {e}", event.token().0)
+                }
             }
         }
     }
 }
 
-pub async fn server_main(server: &str, tunnel: &str) -> Result<()> {
-    let listener = TcpListener::bind(tunnel).await?;
-
+pub fn server_main(server: &str, tunnel: &str) -> Result<()> {
     loop {
-        let (stream, tunnel_addr) = listener.accept().await?;
-        info!("tunnel connected: {:?}", tunnel_addr);
+        let tstream = tunnel_accept(tunnel)?;
 
-        match tunnel_handler(stream, server).await {
+        match tunnel_handler(tstream, server) {
             Ok(_) => info!("tunnel disconnected"),
-            Err(Error::EOF) => info!("tunnel disconnected (EOF)"),
+            Err(Error::Eof) => info!("tunnel disconnected (EOF)"),
+            Err(Error::Io(e)) => match e.kind() {
+                ErrorKind::AddrInUse => {
+                    //
+                    // this one is fatal because it'll never work
+                    //
+                    error!("tunnel error: {}", e);
+                    break Err(e.into());
+                }
+                _ => error!("tunnel error: {}", e),
+            },
             Err(e) => error!("tunnel error: {}", e),
         }
     }

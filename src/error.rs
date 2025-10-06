@@ -1,15 +1,15 @@
 pub type Result<T> = core::result::Result<T, Error>;
 
-use std::num::TryFromIntError;
-
-use bincode::error::{DecodeError, EncodeError};
 use derive_more::From;
 
 #[derive(Debug, From)]
 pub enum Error {
     ReadFailure,
-    EOF,
-    ConnectionNotFound,
+    Eof,
+    Empty,
+    NotEnoughData,
+    ConnectionRefused,
+    ClientNotFound,
     BufferTooSmall {
         max: usize,
         actual: usize,
@@ -18,17 +18,17 @@ pub enum Error {
         expected: u8,
         actual: u8,
     },
-    InvalidReadLen {
-        expected: usize,
-        actual: usize,
+    InvalidMessageType {
+        msg: u8,
     },
+    IoError,
     //
     // 2d party
     //
     #[from]
     Io(std::io::Error),
     #[from]
-    DowncastError(TryFromIntError),
+    DowncastError(std::num::TryFromIntError),
 
     //
     // 3rd party
@@ -36,17 +36,18 @@ pub enum Error {
     #[from]
     LoggingError(log::SetLoggerError),
     #[from]
-    PacketDecodeFailure(DecodeError),
-    #[from]
-    PacketEncodeFailure(EncodeError),
-    #[from]
-    MpScError(tokio::sync::mpsc::error::SendError<(u64, Vec<u8>)>),
-    #[from]
     Staplers(rstaples::error::Error),
+    #[from]
+    AddrError(std::net::AddrParseError),
 }
 
 impl core::fmt::Display for Error {
     fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::result::Result<(), core::fmt::Error> {
-        write!(fmt, "{self:?}")
+        match self {
+            Error::Io(io) => {
+                write!(fmt, "{}", io.kind())
+            }
+            _ => write!(fmt, "{self:?}"),
+        }
     }
 }

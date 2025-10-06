@@ -1,119 +1,175 @@
-#![allow(unused)]
 use std::{
-    hash::{DefaultHasher, Hash, Hasher},
-    io::{Cursor, Read, Seek},
-    mem,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
-    ptr::hash,
+    fmt::Display,
+    io::{Cursor, ErrorKind},
 };
 
-use bincode::{
-    BorrowDecode, Decode, Encode,
-    config::{self, Configuration},
-    enc::write,
-};
-use log::{error, info};
-use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    net::TcpStream,
-};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use derive_more::Display;
 
 use crate::error::{Error, Result};
 
 const PACKET_VERSION: u8 = 1;
-const SCRATCH_SIZE: usize = 8 * 1024;
+pub const HEADER_SIZE: usize = 6;
 
-#[derive(Encode, Decode, PartialEq, Debug)]
+#[derive(Display, Debug, Clone, Copy, PartialEq)]
+#[repr(u8)]
+pub enum PacketMessage {
+    Data,
+    ConnectionRefused,
+    Disconnected,
+    Eof,
+    ReadFailure,
+    WriteFailure,
+    IoFailure,
+}
+
+impl TryFrom<u8> for PacketMessage {
+    type Error = Error;
+
+    fn try_from(value: u8) -> Result<Self> {
+        match value {
+            0 => Ok(Self::Data),
+            1 => Ok(Self::ConnectionRefused),
+            2 => Ok(Self::Disconnected),
+            3 => Ok(Self::Eof),
+            4 => Ok(Self::ReadFailure),
+            5 => Ok(Self::WriteFailure),
+            6 => Ok(Self::IoFailure),
+            _ => Err(Error::InvalidMessageType { msg: value }),
+        }
+    }
+}
+
+impl From<&PacketMessage> for Error {
+    fn from(value: &PacketMessage) -> Error {
+        match value {
+            PacketMessage::ConnectionRefused => Error::ConnectionRefused,
+            _ => Error::IoError,
+        }
+    }
+}
+
+impl From<Error> for PacketMessage {
+    fn from(value: Error) -> Self {
+        match value {
+            Error::Eof => PacketMessage::Disconnected,
+            Error::Io(e) => match e.kind() {
+                ErrorKind::ConnectionRefused => PacketMessage::ConnectionRefused,
+                _ => PacketMessage::IoFailure,
+            },
+            _ => PacketMessage::IoFailure,
+        }
+    }
+}
+
+pub type Address = usize;
+
+#[derive(Debug, PartialEq)]
 pub struct Packet {
     pub ver: u8,
-    pub addr: u64,
-    pub msg_id: u64,
-    pub data_len: u32,
+    pub msg: PacketMessage,
+    pub addr: Address,
+    pub data_len: u16,
+}
+
+impl Display for Packet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "ver={} msg={} addr={} len={}",
+            self.ver, self.msg, self.addr, self.data_len
+        )
+    }
 }
 
 impl Packet {
-    pub fn new(addr: u64, msg_id: u64, data_len: usize) -> Result<Packet> {
-        let data_len: u32 = data_len.try_into()?;
-
-        Ok(Packet {
-            ver: PACKET_VERSION,
-            addr,
-            msg_id,
-            data_len,
-        })
-    }
-}
-
-impl core::fmt::Display for Packet {
-    fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::result::Result<(), core::fmt::Error> {
-        write!(fmt, "addr={} id={} len={}", self.addr, self.msg_id, self.data_len)
-    }
-}
-
-pub struct PacketStream {
-    config: Configuration,
-}
-
-impl Default for PacketStream {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl PacketStream {
-    pub fn new() -> Self {
+    pub fn new(addr: Address, msg: PacketMessage, data_len: u16) -> Packet {
         Self {
-            config: config::standard(),
+            ver: PACKET_VERSION,
+            msg,
+            addr,
+            data_len,
         }
     }
 
-    pub fn addr_from_sockaddr(addr: &SocketAddr) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        addr.hash(&mut hasher);
-        hasher.finish()
+    pub fn new_data(addr: Address, data_len: u16) -> Packet {
+        Self {
+            ver: PACKET_VERSION,
+            msg: PacketMessage::Data,
+            addr,
+            data_len,
+        }
     }
 
-    pub async fn read<R>(&mut self, reader: &mut R) -> Result<(u64, Vec<u8>)>
-    where
-        R: AsyncReadExt + Unpin,
-    {
-        let mut buf: [u8; 64] = [0; 64];
-        let len: usize = reader.read_u32().await?.try_into()?;
+    pub fn new_message(addr: Address, msg: PacketMessage) -> Packet {
+        Self {
+            ver: PACKET_VERSION,
+            msg,
+            addr,
+            data_len: 0,
+        }
+    }
 
-        if len > buf.len() {
-            return Err(Error::BufferTooSmall {
-                max: buf.len(),
-                actual: len,
+    pub fn encode(&self, buf: &mut [u8]) -> Result<()> {
+        let mut cur = Cursor::new(buf);
+
+        cur.write_u8(self.ver)?;
+        cur.write_u8(self.msg as u8)?;
+
+        let addr_16: u16 = self.addr.try_into()?;
+
+        cur.write_u16::<LittleEndian>(addr_16)?;
+        cur.write_u16::<LittleEndian>(self.data_len)?;
+
+        Ok(())
+    }
+
+    pub fn from_buffer(buf: &[u8]) -> Result<Packet> {
+        let mut cur = Cursor::new(buf);
+
+        let ver = cur.read_u8()?;
+
+        if ver != PACKET_VERSION {
+            return Err(Error::InvalidVersion {
+                actual: ver,
+                expected: PACKET_VERSION,
             });
         }
 
-        reader.read_exact(&mut buf[0..len]).await?;
+        let msg: PacketMessage = cur.read_u8()?.try_into()?;
 
-        let (packet, _): (Packet, usize) = bincode::decode_from_slice(&buf[0..len], config::standard())?;
+        let addr: u16 = cur.read_u16::<LittleEndian>()?;
+        let data_len = cur.read_u16::<LittleEndian>()?;
 
-        let data_size: usize = packet.data_len.try_into()?;
-
-        let mut data = vec![0u8; data_size];
-        reader.read_exact(&mut data).await?;
-
-        Ok((packet.addr, data))
+        Ok(Packet::new(addr as Address, msg, data_len))
     }
+}
 
-    pub async fn write<W>(&mut self, writer: &mut W, msg_id: u64, addr: u64, data: &[u8]) -> Result<()>
-    where
-        W: AsyncWriteExt + Unpin,
-    {
-        let p = Packet::new(addr, msg_id, data.len())?;
+////////////////////////////////////////////////////////////////////////////////
+// PUBLIC
+////////////////////////////////////////////////////////////////////////////////
 
-        let mut buf: [u8; 64] = [0; 64];
+////////////////////////////////////////////////////////////////////////////////
+// TEST
+////////////////////////////////////////////////////////////////////////////////
+#[cfg(test)]
+mod tests {
+    use rstaples::logging::StaplesLogger;
 
-        let enc_len = bincode::encode_into_slice(p, &mut buf, config::standard())?;
-        let enc_len_32: u32 = enc_len.try_into()?;
+    use super::*;
 
-        writer.write_u32(enc_len_32).await?;
-        writer.write_all(&buf[0..enc_len]).await?;
-        writer.write_all(data).await?;
-        writer.flush().await?;
-        Ok(())
+    #[test]
+    fn encode_decode() {
+        StaplesLogger::new()
+            .with_stderr()
+            .with_log_level(log::LevelFilter::Info)
+            .start()
+            .unwrap();
+
+        let p = Packet::new(1, PacketMessage::IoFailure, 10);
+        let mut buf: [u8; HEADER_SIZE] = [0; HEADER_SIZE];
+        let _enc_len = p.encode(&mut buf).unwrap();
+        let p2 = Packet::from_buffer(&buf).unwrap();
+        assert_eq!(p, p2);
     }
 }
