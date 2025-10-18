@@ -4,13 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-clap = { version = "4.5.48", features = ["derive"] }
-derive_more = { version = "2.0.1", features = ["display", "from"] }
-log = "0.4.28"
-mio = { version = "1.0.4", features = ["net", "os-poll"] }
-rstaples = "0.1.4"
-bytes = "1.10.1"
-byteorder = "1.5.0"
+clap = { version = "4.5", features = ["derive"] }
+derive_more = { version = "2.0", features = ["display", "from"] }
+log = "0.4"
+mio = { version = "1.0", features = ["net", "os-poll"] }
+rstaples = "0.1"
+bytes = "1.10"
+byteorder = "1.5"
 
 [profile.release]
 strip = true    # Automatically strip symbols from the binary.
