@@ -51,7 +51,10 @@ impl ClientStream {
             Err(e) => return Err(e.into()),
         };
 
-        self.stream.flush()?;
+        if let Err(e) = self.stream.flush() {
+            // not fatal ?
+            error!("flush failure ({e})");
+        }
 
         Ok(written_len)
     }
@@ -142,8 +145,8 @@ impl TokenStreams {
             None => return Err(Error::ClientNotFound),
         };
 
-        client.stream.write_all(buffer)?;
-        client.stream.flush()?;
+        client.push_data(buffer);
+        client.flush_buffer()?;
 
         Ok(())
     }
