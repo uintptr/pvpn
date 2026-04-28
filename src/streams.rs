@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    io::{ErrorKind, Read, Write},
+    io::{ErrorKind, IoSlice, Read, Write},
 };
 
 use bytes::{Buf, BytesMut};
@@ -64,6 +64,50 @@ impl ClientStream {
 
     pub fn push_data(&mut self, data: &[u8]) {
         self.buffered.extend_from_slice(data)
+    }
+
+    fn write_chained(&mut self, slices: &[&[u8]]) -> Result<()> {
+        let buf_len = self.buffered.len();
+
+        let mut io_slices: Vec<IoSlice<'_>> = Vec::with_capacity(slices.len() + 1);
+        if buf_len > 0 {
+            io_slices.push(IoSlice::new(&self.buffered));
+        }
+        for s in slices {
+            if !s.is_empty() {
+                io_slices.push(IoSlice::new(s));
+            }
+        }
+
+        if io_slices.is_empty() {
+            return Ok(());
+        }
+
+        let written = match self.stream.write_vectored(&io_slices) {
+            Ok(v) => v,
+            Err(e) if e.kind() == ErrorKind::WouldBlock => 0,
+            Err(e) => return Err(e.into()),
+        };
+
+        drop(io_slices);
+
+        if written >= buf_len {
+            self.buffered.clear();
+        } else {
+            self.buffered.advance(written);
+        }
+
+        let mut skip = written.saturating_sub(buf_len);
+        for s in slices {
+            if skip >= s.len() {
+                skip -= s.len();
+            } else {
+                self.buffered.extend_from_slice(&s[skip..]);
+                skip = 0;
+            }
+        }
+
+        Ok(())
     }
 
     pub fn complete_connect(&mut self) -> Result<usize> {
@@ -148,10 +192,7 @@ impl TokenStreams {
             None => return Err(Error::ClientNotFound),
         };
 
-        client.push_data(buffer);
-        client.flush_buffer()?;
-
-        Ok(())
+        client.write_chained(&[buffer])
     }
 
     pub fn write_message(&mut self, src: Address, dst: Address, msg: PacketMessage) -> Result<()> {
@@ -167,11 +208,7 @@ impl TokenStreams {
         let mut hdr: [u8; HEADER_SIZE] = [0; HEADER_SIZE];
         p.encode(&mut hdr)?;
 
-        client.push_data(&hdr);
-
-        client.flush_buffer()?;
-
-        Ok(())
+        client.write_chained(&[&hdr])
     }
 
     pub fn write_packet(&mut self, src: Address, dst: Address, data: &[u8]) -> Result<()> {
@@ -189,12 +226,7 @@ impl TokenStreams {
         let mut hdr: [u8; HEADER_SIZE] = [0; HEADER_SIZE];
         p.encode(&mut hdr)?;
 
-        client.push_data(&hdr);
-        client.push_data(data);
-
-        client.flush_buffer()?;
-
-        Ok(())
+        client.write_chained(&[&hdr, data])
     }
 
     pub fn read_packet(&mut self, buf: &mut [u8]) -> Result<(usize, Address)> {
