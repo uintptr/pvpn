@@ -21,7 +21,7 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
 
     let mut streams = TokenStreams::new();
 
-    streams.add(TUNNEL_STREAM.0, ClientStream::new(tstream));
+    streams.add(TUNNEL_STREAM.0, ClientStream::new(tstream)?);
 
     let mut read_buffer: [u8; BUFFER_SIZE] = [0; BUFFER_SIZE];
 
@@ -83,7 +83,7 @@ fn read_loop(mut tstream: TcpStream, server: &str) -> Result<()> {
                             Interest::READABLE | Interest::WRITABLE,
                         )?;
 
-                        let mut client = ClientStream::new(sstream);
+                        let mut client = ClientStream::new(sstream)?;
 
                         client.push_data(&read_buffer[0..read_len]);
                         streams.add(dst_addr, client);

@@ -71,7 +71,7 @@ fn tunnel_handler(mut tstream: TcpStream, server: &str) -> Result<()> {
         Interest::READABLE | Interest::WRITABLE,
     )?;
 
-    streams.add(TUNNEL_STREAM.0, ClientStream::new(tstream));
+    streams.add(TUNNEL_STREAM.0, ClientStream::new(tstream)?);
 
     info!("-----------------------------SERVER-----------------------------");
 
@@ -91,7 +91,7 @@ fn tunnel_handler(mut tstream: TcpStream, server: &str) -> Result<()> {
                 poll.registry()
                     .register(&mut istream, token, Interest::READABLE | Interest::WRITABLE)?;
 
-                let iclient = ClientStream::new(istream);
+                let iclient = ClientStream::new(istream)?;
                 streams.add(token.0, iclient);
 
                 token_id += 1;

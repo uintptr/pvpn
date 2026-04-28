@@ -18,15 +18,18 @@ pub struct ClientStream {
     pub is_connected: bool,
 }
 
-pub const BUFFER_SIZE: usize = 8 * 1024;
+pub const BUFFER_SIZE: usize = 32 * 1024;
 
 impl ClientStream {
-    pub fn new(stream: TcpStream) -> Self {
-        Self {
+    pub fn new(stream: TcpStream) -> Result<Self> {
+        if let Err(e) = stream.set_nodelay(true) {
+            warn!("set_nodelay failed ({e})");
+        }
+        Ok(Self {
             stream,
             buffered: BytesMut::new(),
             is_connected: false,
-        }
+        })
     }
 
     fn flush_buffer(&mut self) -> Result<usize> {
