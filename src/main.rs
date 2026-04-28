@@ -1,7 +1,7 @@
 use pvpn::{error::Result, tunnel_client::client_main, tunnel_server::server_main};
 
 use clap::{Parser, Subcommand};
-use rstaples::{logging::StaplesLogger, staples::printkv};
+use rstaples::display::printkv;
 
 pub const DEF_SERVER_PORT: u16 = 1414;
 const DEF_INTERNET_PORT: u16 = 8080;
@@ -73,15 +73,14 @@ enum Commands {
     Server(ServerArgs),
 }
 
-fn setup_logger(verbose: bool) -> Result<()> {
+fn setup_logger(verbose: bool) {
     let level = if verbose {
         log::LevelFilter::Info
     } else {
         log::LevelFilter::Error
     };
 
-    StaplesLogger::new().with_log_level(level).with_stderr().start()?;
-    Ok(())
+    env_logger::Builder::new().filter_level(level).init();
 }
 
 fn main() -> Result<()> {
@@ -97,7 +96,7 @@ fn main() -> Result<()> {
             printkv("Server", &server);
             printkv("Reconnect", format!("{} ms", opt.reconnect_delay));
 
-            setup_logger(opt.verbose)?;
+            setup_logger(opt.verbose);
 
             client_main(&tunnel, &server, opt.reconnect_delay)
         }
@@ -109,7 +108,7 @@ fn main() -> Result<()> {
             printkv("Tunnel Address", &tunnel);
             printkv("Server Address", &server);
 
-            setup_logger(opt.verbose)?;
+            setup_logger(opt.verbose);
 
             server_main(&server, &tunnel)
         }
