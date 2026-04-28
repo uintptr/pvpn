@@ -135,14 +135,18 @@ fn tunnel_handler(mut tstream: TcpStream, server: &str) -> Result<()> {
                     return Err(e);
                 }
             } else if event.is_readable() {
-                match streams.read(event.token().0, &mut read_buffer) {
-                    Ok(v) => {
-                        info!("read {v} bytes from internet {:?}", event.token());
-                        streams.write_packet(TUNNEL_STREAM.0, event.token().0, &read_buffer[0..v])?;
-                    }
-                    Err(e) => {
-                        info!("{e}");
-                        streams.write_message(TUNNEL_STREAM.0, event.token().0, PacketMessage::Disconnected)?
+                loop {
+                    match streams.read(event.token().0, &mut read_buffer) {
+                        Ok(0) => break,
+                        Ok(v) => {
+                            info!("read {v} bytes from internet {:?}", event.token());
+                            streams.write_packet(TUNNEL_STREAM.0, event.token().0, &read_buffer[0..v])?;
+                        }
+                        Err(e) => {
+                            info!("{e}");
+                            streams.write_message(TUNNEL_STREAM.0, event.token().0, PacketMessage::Disconnected)?;
+                            break;
+                        }
                     }
                 }
             } else if event.is_writable() {

@@ -154,18 +154,10 @@ impl Packet {
 ////////////////////////////////////////////////////////////////////////////////
 #[cfg(test)]
 mod tests {
-    use rstaples::logging::StaplesLogger;
-
     use super::*;
 
     #[test]
     fn encode_decode() {
-        StaplesLogger::new()
-            .with_stderr()
-            .with_log_level(log::LevelFilter::Info)
-            .start()
-            .unwrap();
-
         let p = Packet::new(1, PacketMessage::IoFailure, 10);
         let mut buf: [u8; HEADER_SIZE] = [0; HEADER_SIZE];
         let _enc_len = p.encode(&mut buf).unwrap();
